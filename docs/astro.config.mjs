@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config'
 import starlight from '@astrojs/starlight'
 import react from '@astrojs/react'
+import { unified } from '@astrojs/markdown-remark'
 import { fileURLToPath } from 'node:url'
 import { remarkC4 } from '@liminis/diagrams/remark'
 
@@ -24,7 +25,12 @@ export default defineConfig({
   // Turns ```c4 fences into live islands. Files stay readable as markdown on
   // GitHub, where the fence renders as a code block, and gain the interactive
   // renderer here. See @liminis/diagrams/remark.
-  markdown: { remarkPlugins: [remarkC4] },
+  //
+  // Astro 7's default Markdown processor is Sätteri, which does not run remark
+  // plugins. remarkC4 is one, so the unified (remark/rehype) processor is
+  // selected explicitly; that is also why @astrojs/markdown-remark is a direct
+  // dependency here rather than something Astro installs.
+  markdown: { processor: unified({ remarkPlugins: [remarkC4] }) },
   site: 'https://v3rv.com',
   base: '/liminis-diagrams',
   // React is here for embedded applets: a live C4 editor on the page that
@@ -39,7 +45,9 @@ export default defineConfig({
       title: '@liminis/diagrams',
       description:
         'C4 architecture diagrams for JavaScript: parse C4-PlantUML, lay out with dagre, render to SVG.',
-      social: { github: 'https://github.com/verveguy/liminis-diagrams' },
+      social: [
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/verveguy/liminis-diagrams' },
+      ],
       editLink: {
         // Starlight appends the page's path from the *Astro project root* —
         // `src/content/docs/<page>.mdx` — so this base is the project root's
