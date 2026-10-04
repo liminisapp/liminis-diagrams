@@ -19,7 +19,6 @@ updates:
     commit-message:
       prefix: chore
       include: scope
-    # Majors match no group, so each gets a PR of its own.
     groups:
       instantdb:
         patterns: ["@instantdb/*", "instant-cli"]
@@ -29,6 +28,10 @@ updates:
       dev-non-major:
         dependency-type: development
         update-types: [minor, patch]
+      # Any other major: one PR per dependency, across every directory above.
+      majors:
+        update-types: [major]
+        group-by: dependency-name
 
   - package-ecosystem: github-actions
     directory: /
