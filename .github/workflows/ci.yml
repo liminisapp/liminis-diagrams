@@ -29,11 +29,11 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       # Note the gap with `engines.node` in package.json, which says `>=22`:
       # this job runs 24 only. 22 is claimed because it is an LTS release and
@@ -41,7 +41,7 @@ jobs:
       # intent rather than by test. Closing that gap means matrixing this job
       # over [22, 24] — worth doing if a consumer reports actually running 22,
       # and not worth the CI minutes before then.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: 'pnpm'
