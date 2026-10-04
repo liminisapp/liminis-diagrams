@@ -40,11 +40,11 @@ jobs:
     steps:
       # This job installs dependencies and runs their lifecycle scripts, so the
       # checkout token must not be left in .git/config for that code to read.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       # Node 24, matching ci.yml — every workflow in this repository runs the
       # same major.
@@ -58,7 +58,7 @@ jobs:
       # Keep this in step with ci.yml if either moves. The suite runs again
       # below on this Node, so a release that works only on the version CI
       # used would fail here rather than reach the registry.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: 'pnpm'
@@ -160,11 +160,11 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
