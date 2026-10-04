@@ -6,11 +6,11 @@
   "//repository": "Not cosmetic, and not optional. npm matches this URL against the GitHub Actions OIDC claim when publishing with --provenance; without it the registry rejects the publish outright (E422) after the release tag has already been cut. That is exactly how 0.1.0's first release attempt failed (#6). The `git+https://` scheme and the `.git` suffix are both part of the match \u2014 the SSH form does not work.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/verveguy/liminis-diagrams.git"
+    "url": "git+https://github.com/liminisapp/liminis-diagrams.git"
   },
-  "homepage": "https://github.com/verveguy/liminis-diagrams",
+  "homepage": "https://github.com/liminisapp/liminis-diagrams",
   "bugs": {
-    "url": "https://github.com/verveguy/liminis-diagrams/issues"
+    "url": "https://github.com/liminisapp/liminis-diagrams/issues"
   },
   "keywords": [
     "c4",
