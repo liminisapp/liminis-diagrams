@@ -6,9 +6,8 @@ import { unified } from '@astrojs/markdown-remark'
 import { fileURLToPath } from 'node:url'
 import { remarkC4 } from '@liminis/diagrams/remark'
 
-// Served as a GitHub Pages project site. The account has a custom domain on the
-// user site, so this resolves to https://v3rv.com/liminis-diagrams/ rather than
-// verveguy.github.io — the subpath is the same either way.
+// Served at https://docs.liminis.app/liminis-diagrams/ — a subpath of the docs
+// host, so `site` is the bare host and `base` carries the project path.
 //
 // The demo is a separate Vite app built with base '/liminis-diagrams/demo/' and
 // copied into this site's output by .github/workflows/pages.yml. Nothing here
@@ -31,7 +30,7 @@ export default defineConfig({
   // selected explicitly; that is also why @astrojs/markdown-remark is a direct
   // dependency here rather than something Astro installs.
   markdown: { processor: unified({ remarkPlugins: [remarkC4] }) },
-  site: 'https://v3rv.com',
+  site: 'https://docs.liminis.app',
   base: '/liminis-diagrams',
   // React is here for embedded applets: a live C4 editor on the page that
   // explains it. Astro ships static HTML and hydrates only components marked
@@ -46,7 +45,7 @@ export default defineConfig({
       description:
         'C4 architecture diagrams for JavaScript: parse C4-PlantUML, lay out with dagre, render to SVG.',
       social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/verveguy/liminis-diagrams' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/liminisapp/liminis-diagrams' },
       ],
       editLink: {
         // Starlight appends the page's path from the *Astro project root* —
@@ -54,7 +53,7 @@ export default defineConfig({
         // location in the repository, which is docs/. Verified against the
         // deployed site rather than reasoned about: an earlier attempt to
         // "correct" this to .../docs/src/content/docs/ produced a doubled path.
-        baseUrl: 'https://github.com/verveguy/liminis-diagrams/edit/main/docs/',
+        baseUrl: 'https://github.com/liminisapp/liminis-diagrams/edit/main/docs/',
       },
       sidebar: [
         {

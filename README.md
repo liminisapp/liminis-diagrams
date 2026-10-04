@@ -7,15 +7,15 @@ editing.
 Extracted from [`@liminis/editor`](https://github.com/verveguy/liminis-editor), where it
 renders ` ```c4 ` fenced code blocks. Nothing here is bound to that editor.
 
-Documentation: **[v3rv.com/liminis-diagrams](https://v3rv.com/liminis-diagrams/)**.
+Documentation: **[docs.liminis.app/liminis-diagrams](https://docs.liminis.app/liminis-diagrams/)**.
 
 ## Demo
 
-**[https://v3rv.com/liminis-diagrams/demo/](https://v3rv.com/liminis-diagrams/demo/)** — edit
+**[https://docs.liminis.app/liminis-diagrams/demo/](https://docs.liminis.app/liminis-diagrams/demo/)** — edit
 C4-PlantUML source and see it re-render live, drag nodes to reposition them, toggle dark
 mode, and switch between a few preset diagrams. The demo keeps dragged positions in
 memory only, for as long as the tab is open — this package has no persistence of its
-own (see [Recipe 3](https://v3rv.com/liminis-diagrams/recipes/#recipe-3-position-persistence--the-hosts-choice)),
+own (see [Recipe 3](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-3-position-persistence--the-hosts-choice)),
 and neither does this demo.
 
 ## Install
@@ -27,12 +27,12 @@ npm install @liminis/diagrams
 `react` and `react-dom` are **optional** peers. Installing the package gets you
 `@dagrejs/dagre` and nothing else, so `@liminis/diagrams/core` works in a CLI or CI job
 with no React on disk. Install the peers if you use `/react` or `/server` — see
-[Architecture](https://v3rv.com/liminis-diagrams/architecture/) for why the split exists and which entry
+[Architecture](https://docs.liminis.app/liminis-diagrams/architecture/) for why the split exists and which entry
 point to pick.
 
 ## Not sure this package does what you're assuming?
 
-Read [Limitations](https://v3rv.com/liminis-diagrams/#limitations--read-this-first) before you build
+Read [Limitations](https://docs.liminis.app/liminis-diagrams/#limitations--read-this-first) before you build
 against this package. In short: no editing UI, no persistence, element IDs aren't
 stable across diagrams, no cross-diagram links.
 
@@ -87,7 +87,7 @@ import { C4InteractiveRenderer } from '@liminis/diagrams/react';
 
 Pass `manualPositions` to `layoutC4Diagram` to bypass dagre for the elements you have
 positions for. Persisting them is entirely your call — see
-[Recipe 3](https://v3rv.com/liminis-diagrams/recipes/#recipe-3-position-persistence--the-hosts-choice) for a worked
+[Recipe 3](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-3-position-persistence--the-hosts-choice) for a worked
 example (including how `@liminis/editor` does it) and why this package itself never
 writes them anywhere.
 
@@ -100,8 +100,8 @@ npx --package=@liminis/diagrams --package=react --package=react-dom -- render-c4
 
 Useful for pre-rendering diagrams so a plain `![Diagram](diagram.svg)` is enough for
 GitHub (or any markdown renderer) to show them — see
-[Rendering diagrams on GitHub](https://v3rv.com/liminis-diagrams/github-integration/) for the CI recipe, and
-[Rendering diagrams in Claude Code](https://v3rv.com/liminis-diagrams/claude-code-integration/) for getting Claude
+[Rendering diagrams on GitHub](https://docs.liminis.app/liminis-diagrams/github-integration/) for the CI recipe, and
+[Rendering diagrams in Claude Code](https://docs.liminis.app/liminis-diagrams/claude-code-integration/) for getting Claude
 to render real diagrams instead of hand-drawing them.
 
 ## Supported syntax
@@ -109,13 +109,13 @@ to render real diagrams instead of hand-drawing them.
 `Person`, `System`, `Container`, `Component` and their `_Ext` / `Db` / `Queue` variants,
 plus `Deployment_Node`, `Node`, and `InfrastructureNode` variants; boundary macros;
 `Rel` (with directional variants) and `BiRel`. See
-[the C4-PlantUML reference](https://v3rv.com/liminis-diagrams/dsl-reference/) for the full macro table and exactly
+[the C4-PlantUML reference](https://docs.liminis.app/liminis-diagrams/dsl-reference/) for the full macro table and exactly
 which directives (`@startuml`, `!include`, `SHOW_LEGEND()`, `LAYOUT_*`, …) are applied
 versus silently stripped.
 
 ## Documentation
 
-Building a tool on top of this package? [the documentation site](https://v3rv.com/liminis-diagrams/) covers the
+Building a tool on top of this package? [the documentation site](https://docs.liminis.app/liminis-diagrams/) covers the
 entry-point boundary, the full DSL reference, the data model, and runnable recipes for
 headless rendering, embedding the interactive renderer, and position persistence.
 

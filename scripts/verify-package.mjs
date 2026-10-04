@@ -37,12 +37,12 @@ import { fileURLToPath } from 'node:url'
 import { parsePackOutput } from './pack-output.mjs'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-// Matched exactly, not by substring: `github.com/verveguy/liminis-diagrams` is
-// a prefix of `github.com/verveguy/liminis-diagrams-fork`, so a substring test
+// Matched exactly, not by substring: `github.com/liminisapp/liminis-diagrams` is
+// a prefix of `github.com/liminisapp/liminis-diagrams-fork`, so a substring test
 // would pass for the wrong repository. The `git+https://` scheme and the `.git`
 // suffix are both part of what npm matches against the OIDC claim, so both are
 // part of the expected value rather than checked separately.
-const EXPECTED_REPO_URL = 'git+https://github.com/verveguy/liminis-diagrams.git'
+const EXPECTED_REPO_URL = 'git+https://github.com/liminisapp/liminis-diagrams.git'
 const ENTRY_POINTS = ['.', './core', './react', './playground', './remark', './server']
 /**
  * Entries that must work with no React installed, each with a probe that
@@ -135,8 +135,8 @@ if (!repoUrl) {
   const why = []
   if (!repoUrl.startsWith('git+https://')) why.push('scheme is not git+https:// (the SSH form does not match the claim)')
   if (!repoUrl.endsWith('.git')) why.push('missing the .git suffix')
-  if (!repoUrl.replace(/^git\+/, '').replace(/\.git$/, '').endsWith('github.com/verveguy/liminis-diagrams'))
-    why.push('does not point at verveguy/liminis-diagrams')
+  if (!repoUrl.replace(/^git\+/, '').replace(/\.git$/, '').endsWith('github.com/liminisapp/liminis-diagrams'))
+    why.push('does not point at liminisapp/liminis-diagrams')
   fail('repository.url matches this repository exactly', `got  ${repoUrl}\nwant ${EXPECTED_REPO_URL}` + (why.length ? `\n${why.join('\n')}` : ''))
 } else {
   pass(`repository.url ${repoUrl}`)

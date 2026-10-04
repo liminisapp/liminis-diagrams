@@ -21,7 +21,7 @@ There are two ways to make that happen, and they compose — use either or both:
 
 ## 1. A Skill (what's shipped here)
 
-[`integrations/claude-code/skills/render-c4-diagram/`](https://github.com/verveguy/liminis-diagrams/blob/main/integrations/claude-code/skills/render-c4-diagram/)
+[`integrations/claude-code/skills/render-c4-diagram/`](https://github.com/liminisapp/liminis-diagrams/blob/main/integrations/claude-code/skills/render-c4-diagram/)
 is a ready-to-copy Claude Code skill. It tells Claude: when you see C4-PlantUML source
 (a fenced ` ```c4 ` block, a `.puml` file, pasted text using `Person`/`System`/
 `Container`/`Rel` macros), pipe it through
@@ -45,7 +45,7 @@ is what the MCP tool below is for.
 For Claude Desktop, Claude.ai, or any other MCP-connected client — not just Claude
 Code — expose the renderer as an MCP tool instead of a shelled-out CLI. This library
 already has a consumer doing exactly that: the doc comment on
-[`renderC4DiagramToSVG`](https://github.com/verveguy/liminis-diagrams/blob/main/src/server/render-to-string.ts) notes it's "used by the
+[`renderC4DiagramToSVG`](https://github.com/liminisapp/liminis-diagrams/blob/main/src/server/render-to-string.ts) notes it's "used by the
 `app_render_c4_diagram` MCP tool for Confluence publishing" in `@liminis/editor`. That
 tool isn't part of this repo, but the shape is a small wrapper:
 

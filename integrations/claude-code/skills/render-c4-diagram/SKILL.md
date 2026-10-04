@@ -8,9 +8,9 @@ description: Render C4-PlantUML architecture diagram source (Person/System/Conta
 Claude has no native support for C4-PlantUML — Artifacts render Mermaid diagrams and
 raw SVG natively, but C4-PlantUML is neither, so left alone Claude will either hand-draw
 an approximation or refuse. This skill wraps the `render-c4` CLI from
-[`@liminis/diagrams`](https://github.com/verveguy/liminis-diagrams) so a real, correctly
+[`@liminis/diagrams`](https://github.com/liminisapp/liminis-diagrams) so a real, correctly
 laid-out diagram gets produced instead — see
-[Rendering diagrams on GitHub](https://v3rv.com/liminis-diagrams/github-integration/) for the CLI's full flag
+[Rendering diagrams on GitHub](https://docs.liminis.app/liminis-diagrams/github-integration/) for the CLI's full flag
 reference.
 
 ## When this applies

@@ -197,7 +197,7 @@ relative repo path. The CLI does not care; it only produces files on disk.
 ## What this site does
 
 This documentation runs a variant worth knowing about, because it goes one step further:
-[`docs/scripts/render-diagrams.mjs`](https://github.com/verveguy/liminis-diagrams/blob/main/docs/scripts/render-diagrams.mjs)
+[`docs/scripts/render-diagrams.mjs`](https://github.com/liminisapp/liminis-diagrams/blob/main/docs/scripts/render-diagrams.mjs)
 renders each fence *and* maintains the `<img>` tag next to it, so nothing has to be
 written by hand. On the docs site a remark plugin strips that `<img>` and replaces the
 fence with a live, draggable island; on github.com there is no build step, so the

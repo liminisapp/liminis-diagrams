@@ -32,8 +32,8 @@ set -euo pipefail
 
 PKG="@liminis/diagrams"
 STUB_VERSION="0.0.0"
-REPO_URL="https://github.com/verveguy/liminis-diagrams"
-GH_OWNER="verveguy"
+REPO_URL="https://github.com/liminisapp/liminis-diagrams"
+GH_OWNER="liminisapp"
 GH_REPO="liminis-diagrams"
 WORKFLOW="publish.yml"
 
