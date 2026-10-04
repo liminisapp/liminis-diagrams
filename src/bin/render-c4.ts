@@ -6,7 +6,7 @@
  * meant for pre-rendering diagrams in CI so that a plain `![Diagram](x.svg)` in
  * a markdown file is enough for GitHub (or any other markdown renderer) to show
  * it — no live rendering service, no image-provider proxy, nothing to host.
- * See https://v3rv.com/liminis-diagrams/github-integration/ for the recipe this exists for.
+ * See https://docs.liminis.app/liminis-diagrams/github-integration/ for the recipe this exists for.
  *
  * No dependency is added for argument parsing: flags are hand-rolled to match
  * the style of the other scripts in this repo (guard-publish.mjs,
