@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@liminis/diagrams": "^0.1.5",
+    "@liminis/diagrams": "^0.1.6",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
