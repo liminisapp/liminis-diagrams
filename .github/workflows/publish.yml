@@ -157,7 +157,7 @@ jobs:
   smoke:
     needs: publish
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v7
@@ -178,8 +178,37 @@ jobs:
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           echo '{"name":"smoke","version":"1.0.0","private":true}' > package.json
 
-          # The registry is read-through-cached; a fresh publish can take a
-          # moment to be visible. Retry rather than flake.
+          # Two questions, answered separately, because they fail for different
+          # reasons and call for different responses.
+          #
+          # 1. Has the registry caught up? A fresh publish takes a while to
+          #    appear: v0.1.6's version was still absent from the packument
+          #    over two minutes after `npm publish` returned. Not seeing it yet
+          #    says nothing about the package, so wait for it, and if it never
+          #    appears, say that rather than blaming the package.
+          visible=""
+          for attempt in $(seq 1 40); do
+            if [ "$(npm view "$NAME@$WANT" version --prefer-online 2>/dev/null || true)" = "$WANT" ]; then
+              echo "registry lists $NAME@$WANT (check $attempt)"
+              visible=1
+              break
+            fi
+            echo "check $attempt: registry does not list $NAME@$WANT yet — waiting 15s"
+            sleep 15
+          done
+          if [ -z "$visible" ]; then
+            echo
+            echo "INCONCLUSIVE: the registry still does not list $NAME@$WANT after ~10"
+            echo "minutes. This is registry lag, not a defect in the package: check"
+            echo "'npm view $NAME versions' and re-run this job once it appears."
+            npm view "$NAME" versions dist-tags --prefer-online || true
+            exit 1
+          fi
+
+          # 2. Does the bare name resolve to it? Now that the version is
+          #    listed, anything else means a lower version is shadowing this
+          #    release (on Node 20, below the engines floor). A short retry
+          #    remains for the install path's own cache.
           for attempt in 1 2 3 4 5 6; do
             rm -rf node_modules
             npm install --no-audit --no-fund --omit=peer --prefer-online "$NAME" >/dev/null 2>&1 || true
@@ -197,5 +226,5 @@ jobs:
           echo "A lower version is shadowing this release for anyone below the"
           echo "engines floor. Check for a placeholder version with no engines"
           echo "field and unpublish it — the npm window is 72 hours."
-          npm view "$NAME" versions dist-tags || true
+          npm view "$NAME" versions dist-tags --prefer-online || true
           exit 1
