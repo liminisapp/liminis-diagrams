@@ -4,7 +4,7 @@ C4 architecture diagrams: parse [C4-PlantUML](https://github.com/plantuml-stdlib
 macro syntax, lay it out with dagre, render it to SVG — with optional drag-to-position
 editing.
 
-Extracted from [`@liminis/editor`](https://github.com/verveguy/liminis-editor), where it
+Extracted from [`@liminis/editor`](https://github.com/liminisapp/liminis-editor), where it
 renders ` ```c4 ` fenced code blocks. Nothing here is bound to that editor.
 
 Documentation: **[docs.liminis.app/liminis-diagrams](https://docs.liminis.app/liminis-diagrams/)**.

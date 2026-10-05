@@ -1,6 +1,6 @@
 # Deploy the demo/ app to GitHub Pages.
 #
-# Triggers on push to main, not on release like verveguy/liminis-editor's
+# Triggers on push to main, not on release like liminisapp/liminis-editor's
 # equivalent workflow. That's deliberate, not an oversight: demo/ consumes
 # @liminis/diagrams from the npm registry rather than from ../src (see
 # demo/package.json), which makes it a continuous consumer-integration test
