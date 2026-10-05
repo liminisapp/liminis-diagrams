@@ -32,6 +32,13 @@ updates:
       majors:
         update-types: [major]
         group-by: dependency-name
+    ignore:
+      # @types/node tracks the Node major CI runs (node-version '24' in
+      # ci.yml), not the newest release. Newer types would let code call APIs
+      # that do not exist on the runtimes this package supports (engines:
+      # >=22) without a type error. Raise this bound when CI's Node moves.
+      - dependency-name: "@types/node"
+        versions: [">=25.0.0"]
 
   - package-ecosystem: github-actions
     directory: /
