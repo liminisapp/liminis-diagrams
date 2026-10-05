@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@liminis/diagrams':
-        specifier: ^0.1.5
-        version: 0.1.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: ^0.1.6
+        version: 0.1.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -42,8 +42,8 @@ packages:
   '@dagrejs/graphlib@4.0.5':
     resolution: {integrity: sha512-7xrBTqIts3o+PMUZX97wSc+7TUbW+/rULzGNCTP6yooNVDXbzw4Wutg/H/xOutTB/c/k0YqOAavgPh4/Zk9PFA==}
 
-  '@liminis/diagrams@0.1.5':
-    resolution: {integrity: sha512-6ghdn1OK7hyxY5KbZgBrvUrOBlgddkGjgqGYBd8WCvhbkVNkuU9CMl43SoXt89v+R4sTwNZSn6ygrtEJf+xfQw==}
+  '@liminis/diagrams@0.1.6':
+    resolution: {integrity: sha512-OPhP80eFcgk4a8H+0rrtn3GSXacTiCyS84zhM3kn09OKEgwapLCMk+Ae3KqBXnN9j6Tl46M7UzzfhHMOhPxtHg==}
     engines: {node: '>=22'}
     hasBin: true
     peerDependencies:
@@ -373,7 +373,7 @@ snapshots:
 
   '@dagrejs/graphlib@4.0.5': {}
 
-  '@liminis/diagrams@0.1.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@liminis/diagrams@0.1.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@dagrejs/dagre': 3.1.1
     optionalDependencies:
