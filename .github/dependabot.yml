@@ -22,6 +22,23 @@ updates:
     groups:
       instantdb:
         patterns: ["@instantdb/*", "instant-cli"]
+      # vitest and its plugins move as one unit, ahead of the non-major and
+      # majors groups (a dependency joins the first group it matches), with no
+      # update-types so majors land here too rather than in `majors`.
+      #
+      # Why this one is special-cased. `@vitest/coverage-v8` peers its vitest
+      # version *exactly*, so under `majors: group-by: dependency-name` a
+      # vitest major arrives as two PRs that each fail on the other's absence
+      # — not a major that needs code changes, which is what that policy is
+      # for, but one Dependabot cannot express at all. liminis-editor#167 is
+      # that deadlock: @vitest/coverage-v8 4 -> 5 alone against vitest ^4.1.5,
+      # permanently red however often it regenerates. This repo has both at
+      # ^5.1.0 today and would hit the same wall at vitest 6.
+      #
+      # The cost: vitest minors and patches now come as their own PR instead
+      # of riding dev-non-major.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
       runtime-non-major:
         dependency-type: production
         update-types: [minor, patch]
