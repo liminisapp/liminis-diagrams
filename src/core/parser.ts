@@ -92,6 +92,15 @@ const REL_MACROS = new Set([
   'BiRel', 'BiRel_D', 'BiRel_U', 'BiRel_L', 'BiRel_R',
 ]);
 
+/**
+ * Every macro name the parser recognises (element and relationship macros).
+ * Used by alias generation to keep generated aliases clear of macro names.
+ */
+export const C4_MACRO_NAMES: ReadonlySet<string> = new Set([
+  ...Object.keys(ELEMENT_MACROS),
+  ...REL_MACROS,
+]);
+
 /** Directives and macros to silently skip */
 const SKIP_PREFIXES = ['@startuml', '@enduml', '!include', '!define', 'SHOW_', 'HIDE_', 'title '];
 
