@@ -34,6 +34,15 @@ Drag a node and the arrows re-route around it. Turn the checkbox off and the dra
 disappears entirely — that is `isEditMode`, and it is the host's decision, not the
 library's.
 
+## Adding elements and relationships
+
+From the release after 0.1.6, a host that passes `onEdit` also gets an **Add** palette and
+a connect handle on each element. Choosing a kind and clicking the canvas places a new
+element (name it inline); dragging from an element's handle to another adds a `Rel`. Each
+is reported to the host as a one-line change to the source, which `applyC4Edit` produces —
+see [Recipe 4](../recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities).
+The playground below is built from the published package, so it does not offer these yet.
+
 ## Positions are yours to keep
 
 The renderer is **controlled**. It takes positions in and calls back with new ones; it

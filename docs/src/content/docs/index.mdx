@@ -18,12 +18,20 @@ runs the published package, so what you drag there is what you install.
 The most expensive mistake a tool builder can make against this package is invisible
 until you've already built against it. Four things this package does **not** do:
 
-1. **No editing affordance.** There is no textarea overlay, no click-to-edit, no
-   layout-mode toolbar, no dark-mode auto-detection. Those are all Lexical-bound and
-   stayed behind in `@liminis/editor` (`C4Component.tsx`). This package gives you
-   *render* and *drag* — a host still needs its own "edit the source text" surface.
+1. **Structural editing is reported, not applied — and it is narrow.** No textarea
+   overlay, no click-to-edit of existing text, no layout-mode toolbar, no dark-mode
+   auto-detection: those are Lexical-bound and stayed behind in `@liminis/editor`
+   (`C4Component.tsx`), so a host still needs its own "edit the source text" surface.
+   What the package *does* offer (from the release after 0.1.6) is adding: in edit mode
+   `C4InteractiveRenderer` lets a user **add an element** (pick a kind, click the canvas,
+   name it inline) and **add a relationship** (drag from one element to another), and
+   reports each as an edit. `applyC4Edit` in `./core` turns that edit into new source
+   text — one inserted line, nothing else touched — and the host applies it. Delete,
+   rename, re-parent and editing an existing relationship are not supported; those stay
+   source edits. See
+   [Recipe 4](./recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities).
 2. **No persistence.** `@liminis/diagrams` never writes anywhere. `C4InteractiveRenderer`
-   reports position changes via a callback; storing them — in a file, a database, a
+   reports position changes and edits via callbacks; storing them — in a file, a database, a
    fenced code block's meta string, wherever — is entirely the host's job. See
    [Recipe 3](./recipes/#recipe-3-position-persistence--the-hosts-choice).
 3. **Element IDs are fence-local.** `C4Element.id` is unique within one parsed diagram
