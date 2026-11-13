@@ -386,9 +386,17 @@ function verify(
   }
 
   if (after.diagram.relationships.length !== before.relationships.length + 1) return bad();
-  const rel = after.diagram.relationships.find(
-    (r, i) => i >= before.relationships.length - 1 && r.sourceId === edit.sourceId && r.targetId === edit.targetId,
+  // The new relationship may land anywhere in parse order (boundary relationships can follow
+  // it), so look for an index whose removal leaves exactly the original relationships.
+  const same = (a: { sourceId: string; targetId: string; label: string }, b: typeof a) =>
+    a.sourceId === b.sourceId && a.targetId === b.targetId && a.label === b.label;
+  const afterRels = after.diagram.relationships;
+  const inserted = afterRels.some(
+    (r, k) =>
+      r.sourceId === edit.sourceId &&
+      r.targetId === edit.targetId &&
+      afterRels.filter((_, i) => i !== k).every((o, i) => same(o, before.relationships[i])),
   );
-  if (!rel) return bad();
+  if (!inserted) return bad();
   return { ok: true, source: newSource, insertedLine, label };
 }

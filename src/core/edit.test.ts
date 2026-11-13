@@ -445,4 +445,25 @@ describe('applyC4Edit: byte-identity of everything else (FR-004)', () => {
     expect(r.insertedLine.startsWith('\t')).toBe(true);
     expectSingleLineInsertion(src, r.source, r.insertedLine);
   });
+
+  it('adds a relationship when boundary relationships follow the last top-level Rel', () => {
+    const src = [
+      '@startuml',
+      'Person(a, "A")',
+      'System(b, "B")',
+      'Rel(a, b, "x")',
+      'System_Boundary(bd, "BD") {',
+      '  Container(c, "C")',
+      '  Container(d, "D")',
+      '  Rel(c, d, "1")',
+      '  Rel(d, c, "2")',
+      '}',
+      '@enduml',
+    ].join('\n');
+    const r = applyC4Edit(src, { kind: 'add-relationship', sourceId: 'b', targetId: 'a', label: 'Uses' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expectSingleLineInsertion(src, r.source, r.insertedLine);
+    expect(parseC4(r.source).errors).toEqual([]);
+  });
 });
