@@ -2,7 +2,7 @@
 
 **Feature Branch**: `fabrik/issue-92`
 **Created**: 2026-11-13
-**Status**: Draft
+**Status**: Specified
 **Input**: User description: "## Problem
 
 Today a C4 diagram can be rendered and its nodes dragged, and nothing else. To add a box or connect two boxes, the user has to leave the diagram and edit C4-PlantUML by hand. We want users to **add new elements and relationships directly from the rendered diagram**, while dragging keeps working as it does now.
@@ -96,7 +96,7 @@ Design background lives in `ideas/structural-editing.md` (a pre-spec sketch). It
 
 ### User Story 1 - Add an element where I place it (Priority: P1)
 
-In edit mode, I choose an element kind, place it on the canvas (at the top level or inside an existing boundary), and a new element appears exactly where I placed it. The host receives a one-line source insertion and applies it.
+In edit mode, I choose an element kind, place it on the canvas (at the top level or inside an existing boundary), name it with an inline label input, and a new element appears exactly where I placed it. The host receives a one-line source insertion and applies it.
 
 **Why this priority**: Adding a box is the most basic structural edit and unblocks everything else. The headless edit function that powers it is also the foundation for relationships.
 
@@ -104,11 +104,13 @@ In edit mode, I choose an element kind, place it on the canvas (at the top level
 
 **Acceptance Scenarios**:
 
-1. **Given** a parseable diagram in edit mode, **When** I add an element at the top level, **Then** exactly one macro line is inserted (before any `@enduml`), no other line changes, and the element appears where I placed it.
+1. **Given** a parseable diagram in edit mode, **When** I add an element at the top level, **Then** exactly one macro line is inserted (after the last top-level element and before the first top-level `Rel`, or before `@enduml` as a fallback), no other line changes, and the element appears where I placed it.
 2. **Given** a diagram with a boundary, **When** I add an element inside that boundary, **Then** exactly one macro line is inserted inside that boundary's block, indented like its siblings.
 3. **Given** elements with manual positions, **When** I add a new element, **Then** those elements keep their positions.
 4. **Given** an existing element whose alias equals the slug of the new label, **When** I add the element, **Then** the generated alias is unique and a valid identifier.
 5. **Given** a label with quotes or other characters special in C4-PlantUML, **When** I add the element, **Then** the inserted line is correctly quoted/escaped and the source still parses.
+6. **Given** I have placed a new element, **When** the inline label input appears, **Then** it is pre-filled with a kind-appropriate placeholder label, and confirming it (as is or edited) reports the add with that label.
+7. **Given** the inline label input is open, **When** I cancel it (Escape or `pointercancel`), **Then** nothing is inserted and no stuck state remains.
 
 ---
 
@@ -127,6 +129,7 @@ In edit mode, I drag from one element to another and a `Rel` between them is add
 3. **Given** edit mode, **When** I press on a node to move it, **Then** it moves as today and no relationship is created; a connect-drag and a move-drag are never confused.
 4. **Given** a connect-drag in progress, **When** the pointer is cancelled (e.g. `pointercancel` on iPadOS) or released over empty canvas, **Then** nothing is inserted and no stuck state remains.
 5. **Given** a read-only render (not edit mode), **Then** no add or connect affordance is present.
+6. **Given** a boundary in the diagram, **When** I drag a connection that starts or ends on the boundary, **Then** no relationship is created.
 
 ---
 
@@ -150,12 +153,14 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - Source does not parse (`parseC4` yields no diagram): there is nothing to click, so editing is unavailable until the text parses again.
 - Source with `@startuml`/`@enduml`: top-level insertions land before `@enduml`.
 - Source with no `@startuml`/`@enduml` wrapper at all.
+- Source with no elements yet (insertion falls back to before `@enduml`, or end of file).
+- Source with no top-level `Rel` (insertion goes after the last top-level element).
 - Boundary on a single line vs. a multi-line block; an empty boundary with no siblings to copy indentation from; tabs vs. spaces; CRLF line endings.
 - Labels containing double quotes, backslashes, commas, parentheses or non-ASCII; labels that are empty or whitespace; labels that slug to nothing (e.g. only symbols).
 - Alias collisions with an existing alias, with a macro keyword, or repeated collisions (`cache`, `cache_2`, …).
 - A drag that starts and ends on the same element (self-relationship); a duplicate of an existing relationship between the same pair.
-- A connect-drag released on a boundary (see Open Question 4).
-- Adding a node when some elements have no manual position (see Open Question 6).
+- A connect-drag started or released on a boundary creates nothing.
+- The first structural edit on a diagram where some elements have only automatic positions: all visible nodes are pinned at their current positions (see FR-027).
 
 ## Requirements *(mandatory)*
 
@@ -165,7 +170,7 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **FR-002**: The edit description MUST be a discriminated union with at least an add-element edit and an add-relationship edit, shaped so that further edit kinds (delete, rename, re-parent, edit relationship) can be added later without breaking existing callers.
 - **FR-003**: An edit MUST be a minimal line-level insertion into the original text; no existing line may be modified, and the model MUST NOT be re-serialised.
 - **FR-004**: Comments, `Rel` technology arguments, direction-variant macros and stripped directives (`!include`, `SHOW_LEGEND()`, `title`, `LAYOUT_*`, etc.) MUST remain byte-identical after any edit.
-- **FR-005**: Adding a top-level element MUST insert exactly one macro line, placed before any `@enduml` (exact placement: see Open Question 5).
+- **FR-005**: Adding a top-level element MUST insert exactly one macro line, placed after the last top-level element or boundary and before the first top-level `Rel`; when there is no top-level element, it falls back to immediately before `@enduml` (or the end of the source if there is none). It MUST never land after `@enduml`.
 - **FR-006**: Adding an element inside a boundary MUST insert exactly one macro line inside that boundary's block, indented to match its siblings.
 - **FR-007**: Adding a relationship MUST insert exactly one `Rel(...)` line connecting the chosen source and target elements.
 - **FR-008**: Generated aliases MUST be unique within the diagram and be valid C4-PlantUML identifiers, including when the label collides with an existing alias.
@@ -173,19 +178,21 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **FR-010**: Every source produced by an edit MUST parse with `parseC4` without errors and contain the new element or relationship.
 - **FR-011**: Locating insertion points MUST be supported by source-location information recorded by the parser (element, relationship and boundary line spans, including a boundary's closing line), added without changing the existing shape of parse results for current consumers.
 - **FR-012**: The interactive renderer MUST report an edit through a callback carrying the edit description and, for added elements, the position where the user placed them. It MUST NOT apply the edit itself or write anywhere.
-- **FR-013**: In edit mode only, the renderer MUST offer an add-element affordance: choose a kind, place it on the canvas, optionally inside a boundary. Which kinds are offered: see Open Question 2.
+- **FR-013**: In edit mode only, the renderer MUST offer an add-element affordance: choose a kind, place it on the canvas, optionally inside a boundary. The addable kinds are Person, System, Container and Component, plus the `Db` (cylinder) variant of System, Container and Component. `_Ext`, `Queue`, boundaries and deployment nodes are not offered.
 - **FR-014**: In edit mode only, the renderer MUST offer a connect gesture: dragging from one element to another creates a relationship.
 - **FR-015**: Move-drag and connect-drag MUST be distinguishable gestures; existing move behaviour MUST be unchanged.
 - **FR-016**: New interactions MUST use pointer events and MUST handle `pointercancel`, leaving no stuck gesture state.
-- **FR-017**: A newly added element MUST appear where the user placed it; elements that already had manual positions MUST NOT move. How elements without manual positions are treated: see Open Question 6.
+- **FR-017**: A newly added element MUST appear where the user placed it; elements that already had manual positions MUST NOT move. Elements without manual positions are handled by FR-027.
 - **FR-018**: A read-only render (not in edit mode) MUST gain no new affordances, and existing consumers of `parseC4`, `layoutC4Diagram` and `C4InteractiveRenderer` MUST keep working unchanged (additive API only).
 - **FR-019**: Structural-editing affordances MUST be unavailable while the source does not parse.
 - **FR-020**: The in-repo playground MUST demonstrate both actions end to end: it applies the reported edit to its source text and merges the new element's position into its positions.
 - **FR-021**: The edit function MUST have unit tests covering insertion points, indentation, quoting and escaping of labels, and alias collisions, plus a fixture test proving FR-004 by diffing source before and after.
 - **FR-022**: The docs MUST be updated: Limitations item 1 ("No editing affordance") reflects the new capability; the recipes describe it and the host's responsibilities (apply the edit; merge, don't clear, manual positions), including a worked host example.
-- **FR-023**: How a new element gets its label: [NEEDS CLARIFICATION: placeholder renamed in the source, inline label editing on the diagram, or a host callback? See Open Question 1]
-- **FR-024**: Whether a relationship may start or end on a boundary: [NEEDS CLARIFICATION: see Open Question 4]
-- **FR-025**: Treatment of C4 nesting rules in the UI: [NEEDS CLARIFICATION: warn, block, or neither? See Open Question 3]
+- **FR-023**: A new element MUST get its label through inline label editing on the diagram, scoped to the label only: after placement, an input appears over the new element pre-filled with a kind-appropriate placeholder label. The edit is reported only once the label is confirmed; cancelling reports nothing.
+- **FR-024**: A relationship MUST NOT start or end on a boundary in this first cut: the connect gesture only targets non-boundary elements, and boundary relationships remain a source-level feature.
+- **FR-025**: The UI MUST NOT enforce C4 nesting rules (no warning, no blocking): an element may be added in any boundary regardless of kind, matching what the parser accepts.
+- **FR-026**: The inline label input MUST be usable with pointer and keyboard (confirm and cancel), appear only in edit mode, and leave the source unchanged until the label is confirmed.
+- **FR-027**: On the first structural edit, the position of every currently visible node MUST be pinned (reported to the host together with the new element's position) so that adding a node does not reshuffle elements that previously had only automatic positions. Hosts then store these positions as manual positions, merged with existing ones.
 
 ### Key Entities *(if applicable)*
 
@@ -193,6 +200,7 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **Source span**: The line range of an element, relationship or boundary (including a boundary's closing line) in the original text, used to find insertion points.
 - **Alias**: The C4-PlantUML identifier of an element, unique per diagram. Manual positions are keyed by it, so a generated alias must be stable once created.
 - **Placement**: The canvas position where the user put a new element, travelling with the edit so the host can store it with the other manual positions.
+- **Pinned positions**: The current positions of all visible nodes, reported with the first structural edit so the host can store them and keep the layout stable.
 
 ## Success Criteria *(mandatory)*
 
@@ -205,22 +213,25 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **SC-005**: Generated aliases are unique and valid identifiers across test cases that include label/alias collisions and awkward labels.
 - **SC-006**: With edit mode off, a render exposes zero new interactive affordances, and the existing test suite passes unchanged.
 - **SC-007**: A tool builder can follow the docs' worked host example to apply edits and merge positions without reading the package source.
+- **SC-008**: After the first structural edit in the playground, no previously visible element has moved from its pre-edit position, including elements that had no manual position before.
 
 ## Assumptions
 
-- Only Person, System, Container and Component (and `Db` variants) are candidates for addable kinds unless Open Question 2 says otherwise; boundaries, deployment nodes and the `_Ext`/`Queue` variants are left to the source unless they prove to come for free.
-- Relationships added by the UI use plain `Rel` with a label and no technology argument (technology can be added by hand later); the edit function accepts an optional technology.
+- Relationships added by the UI use plain `Rel` with a label and no technology argument (technology can be added by hand later); the edit function accepts an optional technology. The relationship label's default is a placeholder or empty, to be settled in planning.
 - Structural editing is disabled while the source does not parse, since `parseC4` yields no diagram to interact with.
 - Alias generation is a slug of the label with a numeric suffix on collision, since the issue only requires uniqueness and validity.
+- Confirming an empty inline label falls back to the placeholder rather than inserting an empty label; cancelling (Escape or `pointercancel`) inserts nothing.
 - Adding elements and relationships is undone through whatever undo the host already has; this package adds none.
 - The `liminis-editor` merge-positions change is separate work in that repo; this issue only makes the right host behaviour easy and documents it.
+- The pinning in FR-027 applies the first time a diagram receives a structural edit in a session; subsequent edits only need the new element's position, since all nodes are then manual.
 
 ## Out of Scope *(optional)*
 
 - Delete, rename, re-parent, and editing an existing relationship (the edit API is shaped so these can be added later).
 - The `liminis-editor` host change (replacing its clear-layout-on-id-change effect with merge behaviour), to be filed in that repo.
-- Deployment nodes and the boundary macros as addable kinds, unless they come for free.
-- Enforcing C4 nesting rules in the UI, unless Open Question 3 decides otherwise.
+- Deployment nodes and the boundary macros as addable kinds; `_Ext` and `Queue` variants as addable kinds.
+- Relationships that start or end on a boundary.
+- Enforcing or warning about C4 nesting rules in the UI.
 - Any persistence or file writing by this package.
 
 ## Source References *(optional)*
