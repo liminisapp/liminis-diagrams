@@ -194,6 +194,46 @@ export interface ParseResult {
   errors: ParseError[];
 }
 
+/**
+ * Where an element sits in the source text. Lines are 0-based.
+ */
+export interface ElementSpan {
+  /** Line of the macro call (for a boundary, the line carrying the `{`) */
+  line: number;
+  /**
+   * Line of the closing `}`, only for a boundary whose `{ ... }` block was
+   * opened on the macro line and closed on a later line.
+   */
+  closeLine?: number;
+  /** Id of the enclosing boundary, undefined at the top level */
+  parent?: string;
+}
+
+/**
+ * Where a relationship sits in the source text. Lines are 0-based.
+ */
+export interface RelationshipSpan {
+  line: number;
+  /** Id of the enclosing boundary, undefined at the top level */
+  parent?: string;
+}
+
+/**
+ * Source locations parallel to a `C4Diagram`: `elements[i]` describes
+ * `diagram.elements[i]`, `relationships[i]` describes `diagram.relationships[i]`.
+ */
+export interface C4SourceSpans {
+  elements: ElementSpan[];
+  relationships: RelationshipSpan[];
+}
+
+/**
+ * `ParseResult` plus source spans, from `parseC4WithSpans`.
+ */
+export interface ParseResultWithSpans extends ParseResult {
+  spans: C4SourceSpans;
+}
+
 // =============================================================================
 // TYPE GUARDS
 // =============================================================================

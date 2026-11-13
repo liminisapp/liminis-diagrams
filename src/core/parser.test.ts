@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseC4, validateC4 } from './parser';
+import { parseC4, parseC4WithSpans, validateC4 } from './parser';
 
 describe('C4-PlantUML Parser', () => {
   describe('basic parsing', () => {
@@ -505,5 +505,54 @@ Rel(user, app, "Uses")
       const errors = validateC4(result.diagram!);
       expect(errors).toHaveLength(0);
     });
+  });
+});
+
+describe('parseC4WithSpans', () => {
+  it('returns the same diagram and errors as parseC4', () => {
+    const src = `@startuml\nPerson(u, "U")\nSystem_Boundary(b, "B") {\n  System(s, "S")\n}\nRel(u, s, "x", "t")\n@enduml`;
+    const plain = parseC4(src);
+    const withSpans = parseC4WithSpans(src);
+    expect(withSpans.diagram).toEqual(plain.diagram);
+    expect(withSpans.errors).toEqual(plain.errors);
+  });
+
+  it('records element lines, boundary close lines and parents', () => {
+    const src = `@startuml\nPerson(u, "U")\nSystem_Boundary(b, "B") {\n  System(s, "S")\n  Rel(s, s, "x")\n}\nRel(u, s, "y")\n@enduml`;
+    const { diagram, spans } = parseC4WithSpans(src);
+    expect(diagram!.elements.map((e) => e.id)).toEqual(['u', 'b', 's']);
+    expect(spans.elements).toEqual([
+      { line: 1 },
+      { line: 2, closeLine: 5 },
+      { line: 3, parent: 'b' },
+    ]);
+    expect(spans.relationships).toEqual([{ line: 4, parent: 'b' }, { line: 6 }]);
+  });
+
+  it('gives no closeLine to an unterminated block, a single-line block or a brace-less boundary', () => {
+    expect(parseC4WithSpans('System_Boundary(a, "A") {\nSystem(s, "S")').spans.elements[0]).toEqual({ line: 0 });
+    expect(parseC4WithSpans('System_Boundary(a, "A") { }').spans.elements[0]).toEqual({ line: 0 });
+    expect(parseC4WithSpans('System_Boundary(a, "A")').spans.elements[0]).toEqual({ line: 0 });
+  });
+});
+
+describe('quote-aware parsing (round-trip safety for inserted labels)', () => {
+  it('ignores parentheses inside quoted arguments', () => {
+    const r = parseC4('Person(a, "x) y")\nSystem(b, "Web App (React)")\nSystem(c, ":)")');
+    expect(r.errors).toEqual([]);
+    expect(r.diagram!.elements.map((e) => e.name)).toEqual(['x) y', 'Web App (React)', ':)']);
+  });
+
+  it('does not treat a { in a leaf label as opening a block', () => {
+    const r = parseC4('Person(a, "a {")\nPerson(b, "B")');
+    expect(r.errors).toEqual([]);
+    expect(r.diagram!.elements.map((e) => e.id)).toEqual(['a', 'b']);
+    expect(r.diagram!.elements.every((e) => e.parent === undefined)).toBe(true);
+  });
+
+  it('still opens a boundary block, ignoring braces inside its label', () => {
+    const r = parseC4('System_Boundary(b, "B {x}") {\n  System(s, "S")\n}');
+    expect(r.errors).toEqual([]);
+    expect(r.diagram!.elements.find((e) => e.id === 's')!.parent).toBe('b');
   });
 });
