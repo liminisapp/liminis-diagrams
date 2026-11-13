@@ -277,8 +277,8 @@ const r = applyC4Edit(source, { kind: 'add-element', elementKind: 'system', labe
 // r = { ok: true, source: <...>, insertedLine: 'System(billing, "Billing")', label: 'Billing', alias: 'billing' }
 ```
 
-The result source is the input with one line inserted after the last top-level element
-(before the first `Rel`, and always before `@enduml`). An element with `parent` set to a
+The result source is the input with one line inserted after the last top-level element or
+boundary (wherever that sits relative to any `Rel` lines, and always before `@enduml`). An element with `parent` set to a
 boundary id goes inside that boundary's `{ ... }` block, indented like its siblings. A
 `add-relationship` edit inserts one `Rel(source, target, "label")` line after the last
 top-level `Rel`.
