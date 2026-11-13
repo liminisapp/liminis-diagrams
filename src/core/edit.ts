@@ -98,6 +98,7 @@ export type ApplyC4EditResult =
  */
 export function sanitizeC4Text(text: string): string {
   return text
+    // eslint-disable-next-line no-control-regex -- stripping control characters is the point
     .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
     .replace(/"/g, "'")
     .replace(/\\/g, '/')
