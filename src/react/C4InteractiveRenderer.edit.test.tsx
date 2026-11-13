@@ -171,17 +171,17 @@ describe('add element', () => {
     expect(labelInput(container)).toBeNull();
   });
 
-  it('abandons an add on pointercancel while armed and while naming', () => {
+  it('ignores a pointercancel from an unrelated pointer while armed or naming', () => {
     const a = setup();
     arm(a.container, 'system');
-    fireEvent.pointerCancel(window, { pointerId: 1 });
-    expect(q(a.container, '[data-placement-layer]')).toBeNull();
+    fireEvent.pointerCancel(window, { pointerId: 2 });
+    expect(q(a.container, '[data-placement-layer]')).not.toBeNull();
 
     const b = setup();
     arm(b.container, 'system');
     tap(b.container, { x: 900, y: 900 });
-    fireEvent.pointerCancel(window, { pointerId: 1 });
-    expect(labelInput(b.container)).toBeNull();
+    fireEvent.pointerCancel(window, { pointerId: 2 });
+    expect(labelInput(b.container)).not.toBeNull();
     expect(b.onEdit).not.toHaveBeenCalled();
   });
 

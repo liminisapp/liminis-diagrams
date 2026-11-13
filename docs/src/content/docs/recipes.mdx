@@ -185,7 +185,9 @@ things. (A host that passes `isEditMode` for dragging alone sees no change at al
 
 Dragging a node still moves it; the connect handle is a separate target, and the two
 gestures are mutually exclusive. All of it uses pointer events and handles
-`pointercancel`.
+`pointercancel`. The handle sits on each node's right edge with a touch target of about
+16 SVG units, so the strip of a node just inside its right edge starts a connection
+rather than a move; grab the node anywhere else to move it.
 
 ### The host's half
 

@@ -415,16 +415,11 @@ export function C4InteractiveRenderer({
     return () => window.removeEventListener('keydown', onKey);
   }, [placementKind]);
 
-  // The browser taking a touch away (pointercancel) abandons an add in progress.
-  useEffect(() => {
-    if (placementKind === null && pending === null) return;
-    const onCancel = () => {
-      setPlacementKind(null);
-      setPending(null);
-    };
-    window.addEventListener('pointercancel', onCancel);
-    return () => window.removeEventListener('pointercancel', onCancel);
-  }, [placementKind, pending]);
+  // No window-level pointercancel here on purpose. A tap in flight is owned by the
+  // placement layer, whose own pointercancel handler drops it (nothing is placed). Once
+  // it is placed, no gesture is in flight, so a cancel from an unrelated pointer (a
+  // palm, a system gesture) must not discard the label being typed; Escape or blur
+  // cancel the input.
 
   const handlePlace = useCallback(
     (point: Point) => {
