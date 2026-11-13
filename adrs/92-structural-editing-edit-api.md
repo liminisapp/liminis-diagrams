@@ -53,15 +53,22 @@ the package never writes anywhere, and the `./core` entry stays React-free.
    values, so nothing that had a manual position moves or is re-rounded. The legend is
    pinned only if the host already positioned it. Gating on `onEdit` as well as `isEditMode`
    keeps hosts that pass `isEditMode` for dragging alone (liminis-editor) unchanged.
-9. **Gestures.** Click-to-place from a palette (drag-from-palette is more fragile on touch);
+9. **Gestures.** A context menu on the canvas to add an element (right-click, or a ~500 ms
+   long-press on touch because iPadOS Safari does not reliably fire `contextmenu`; it
+   replaced an initial toolbar palette, which was the package's only control and took space
+   from every host); choosing a kind places the element at the point the menu opened;
    an HTML label input over the SVG (`foreignObject` has focus quirks on iPadOS Safari);
    a dedicated connect handle, always visible, separate from the move rect. Move, connect,
-   placement and the open input are mutually exclusive; every gesture uses pointer events,
+   the menu and the open inputs are mutually exclusive; every gesture uses pointer events,
    owns its pointer id, and aborts on `pointercancel`. Target resolution is geometric, in SVG
    coordinates, so nesting rather than paint order decides the target.
 10. **Relationships on boundaries** are blocked in the UI only; core stays permissive.
     Self-relationships are rejected in both layers (`calculateEdges` cannot draw a loop).
     Duplicate pairs are allowed.
+11. **A new relationship is labelled on creation.** On release over a valid target the same
+    inline input appears at the edge's midpoint, defaulting to "Uses"; the edit is reported
+    only once it is confirmed, so `add-relationship` needs nothing new. Renaming an existing
+    element or relationship stays out of scope and will be a separate `rename` edit kind.
 
 ## Consequences
 
@@ -70,7 +77,8 @@ the package never writes anywhere, and the `./core` entry stays React-free.
   rather than clear positions. `liminis-editor` clears its layout whenever the set of element
   ids changes; that must become a merge before the feature is usable there (separate work in
   that repo).
-- The palette is the package's first built-in control; it is styled inline with `--c4-*`
-  variable fallbacks.
+- The menu is the package's first built-in control; it is styled inline with `--c4-*`
+  variable fallbacks and targeted with `data-c4-menu`. The native context menu is
+  suppressed over the diagram in edit mode with `onEdit` only.
 - Not built: delete, rename, re-parent, editing an existing relationship, deployment nodes
   and boundaries as addable kinds, relationships on boundaries.

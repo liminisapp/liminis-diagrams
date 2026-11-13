@@ -26,7 +26,8 @@ import { sanitizeC4Text, type C4Edit } from '../core/edit';
 import { useC4DiagramDrag } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import { findBoundaryAt, findElementAt } from './hit-test';
-import { EditPalette } from './EditPalette';
+import { useC4LongPress } from './hooks/useC4LongPress';
+import { EditMenu } from './EditMenu';
 import { LabelInput } from './LabelInput';
 
 /** Synthetic ID used to store legend position in manual positions map */
@@ -48,6 +49,26 @@ export interface C4EditContext {
 /** Default size of a freshly placed node, matching what layout gives new nodes. */
 function defaultNodeSize(kind: C4AddableElementKind): { width: number; height: number } {
   return kind === 'person' ? { width: 120, height: 120 } : { width: 240, height: 80 };
+}
+
+/** The add-element context menu, open at a point on the canvas. */
+interface MenuState {
+  /** Where the menu was opened, in SVG space: the new element is placed here. */
+  x: number;
+  y: number;
+  /** Enclosing boundary at that point, if any. */
+  parent?: string;
+  /** The pointer of the long-press that opened it; null for a `contextmenu` event. */
+  pointerId: number | null;
+}
+
+/** A connection that has been released on a valid target and is waiting for its label. */
+interface PendingRel {
+  sourceId: string;
+  targetId: string;
+  /** Midpoint of the new edge, in SVG space: where the label input appears. */
+  x: number;
+  y: number;
 }
 
 /** An element that has been placed and is waiting for its label. */
@@ -173,10 +194,12 @@ export function C4InteractiveRenderer({
   // Structural editing is on only with edit mode AND a callback to report to: a
   // host that passes isEditMode for dragging alone must not grow dead buttons.
   const canEdit = isEditMode && onEdit !== undefined;
-  // Kind armed in the palette, waiting for a click on the canvas.
-  const [placementKind, setPlacementKind] = useState<C4AddableElementKind | null>(null);
+  // Context menu for adding an element, open at a point on the canvas.
+  const [menu, setMenu] = useState<MenuState | null>(null);
   // Placed element waiting for its label; nothing reaches the host until confirmed.
   const [pending, setPending] = useState<PendingAdd | null>(null);
+  // Released connection waiting for its label; likewise nothing is reported until confirmed.
+  const [pendingRel, setPendingRel] = useState<PendingRel | null>(null);
 
   // Local positions during drag (merged with persisted positions)
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
@@ -365,27 +388,28 @@ export function C4InteractiveRenderer({
   const draggedNodeIdRef = useRef<string | null>(null);
   draggedNodeIdRef.current = draggedNodeId;
   const busyRef = useRef(false);
-  busyRef.current = placementKind !== null || pending !== null;
+  busyRef.current = menu !== null || pending !== null || pendingRel !== null;
 
   const { connectSourceId, connectPointer, startConnect } = useC4ConnectDrag({
     svgRef,
     enabled: canEdit,
-    // Move, connect, placement and the label input are mutually exclusive.
+    // Move, connect, the menu and the label inputs are mutually exclusive.
     canStart: () => draggedNodeIdRef.current === null && !busyRef.current,
     onConnect: (sourceId, point) => {
       const target = findElementAt(layout.nodes, point);
       // Empty canvas, a boundary (no boundary relationships in this cut) or the
       // source itself (cannot be drawn as an edge): nothing to report.
       if (!target || target.id === sourceId) return;
-      onEdit?.(
-        {
-          kind: 'add-relationship',
-          sourceId,
-          targetId: target.id,
-          label: C4_DEFAULT_RELATIONSHIP_LABEL,
-        },
-        { positions: buildPositions() },
-      );
+      const source = layout.nodes.find((n) => n.id === sourceId);
+      if (!source) return;
+      // Name it before reporting: the label is fixed before the edit exists, so
+      // the edit API needs nothing new. The input sits at the middle of the edge.
+      setPendingRel({
+        sourceId,
+        targetId: target.id,
+        x: Math.round((source.x + source.width / 2 + target.x + target.width / 2) / 2),
+        y: Math.round((source.y + source.height / 2 + target.y + target.height / 2) / 2),
+      });
     },
   });
 
@@ -400,44 +424,84 @@ export function C4InteractiveRenderer({
   // Edit mode (or the callback) going away drops any half-finished add.
   useEffect(() => {
     if (!canEdit) {
-      setPlacementKind(null);
+      setMenu(null);
       setPending(null);
+      setPendingRel(null);
     }
   }, [canEdit]);
 
-  // Escape disarms a kind waiting for placement.
-  useEffect(() => {
-    if (placementKind === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPlacementKind(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [placementKind]);
+  // No window-level pointercancel here on purpose. Once the element is placed no
+  // gesture is in flight, so a cancel from an unrelated pointer (a palm, a system
+  // gesture) must not discard the label being typed; Escape or blur cancel the
+  // input. The menu does its own, scoped to the pointer that opened it.
 
-  // No window-level pointercancel here on purpose. A tap in flight is owned by the
-  // placement layer, whose own pointercancel handler drops it (nothing is placed). Once
-  // it is placed, no gesture is in flight, so a cancel from an unrelated pointer (a
-  // palm, a system gesture) must not discard the label being typed; Escape or blur
-  // cancel the input.
-
-  const handlePlace = useCallback(
-    (point: Point) => {
-      if (placementKind === null) return;
-      const size = defaultNodeSize(placementKind);
-      const parent = findBoundaryAt(layout.nodes, point)?.id;
-      const next: PendingAdd = {
-        kind: placementKind,
-        x: Math.round(point.x - size.width / 2),
-        y: Math.round(point.y - size.height / 2),
-        ...size,
-      };
+  /** Open the menu at a client point, unless something that is not canvas is there. */
+  const openMenuAt = useCallback(
+    (clientX: number, clientY: number, pointerId: number | null) => {
+      const svg = svgRef.current;
+      const ctm = svg?.getScreenCTM();
+      if (!svg || !ctm) return;
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const p = pt.matrixTransform(ctm.inverse());
+      const next: MenuState = { x: p.x, y: p.y, pointerId };
+      const parent = findBoundaryAt(layout.nodes, p)?.id;
       if (parent !== undefined) next.parent = parent;
-      setPlacementKind(null);
-      setPending(next);
+      setMenu(next);
     },
-    [placementKind, layout.nodes],
+    [layout.nodes],
   );
+
+  /** Where the menu may open: empty canvas or inside a boundary, not on an element, handle or legend. */
+  const isMenuTarget = useCallback(
+    (target: EventTarget | null, clientX: number, clientY: number): boolean => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest('[data-connect-handle]')) return false;
+      if (target.closest(`[data-node-id="${LEGEND_POSITION_ID}"]`)) return false;
+      const svg = svgRef.current;
+      const ctm = svg?.getScreenCTM();
+      if (!svg || !ctm) return false;
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const p = pt.matrixTransform(ctm.inverse());
+      return findElementAt(layout.nodes, p) === null;
+    },
+    [layout.nodes],
+  );
+
+  const { onPointerDownCapture: onLongPressPointerDown } = useC4LongPress({
+    enabled: canEdit,
+    shouldStart: (e) =>
+      draggedNodeIdRef.current === null &&
+      !busyRef.current &&
+      isMenuTarget(e.target, e.clientX, e.clientY),
+    onLongPress: ({ clientX, clientY, pointerId }) => openMenuAt(clientX, clientY, pointerId),
+  });
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    // Edit mode only, and only where the menu exists: a read-only render, and a
+    // host that passes isEditMode without onEdit, keep the browser's own menu.
+    e.preventDefault();
+    if (busyRef.current || draggedNodeIdRef.current !== null) return;
+    if (!isMenuTarget(e.target, e.clientX, e.clientY)) return;
+    openMenuAt(e.clientX, e.clientY, null);
+  };
+
+  const handleSelectKind = (kind: C4AddableElementKind) => {
+    if (!menu) return;
+    const size = defaultNodeSize(kind);
+    const next: PendingAdd = {
+      kind,
+      x: Math.round(menu.x - size.width / 2),
+      y: Math.round(menu.y - size.height / 2),
+      ...size,
+    };
+    if (menu.parent !== undefined) next.parent = menu.parent;
+    setMenu(null);
+    setPending(next);
+  };
 
   const handleConfirmLabel = (value: string) => {
     if (!pending) return;
@@ -452,6 +516,17 @@ export function C4InteractiveRenderer({
     const positions = buildPositions({ [alias]: { x: pending.x, y: pending.y } });
     setPending(null);
     onEdit?.(edit, { positions });
+  };
+
+  const handleConfirmRelLabel = (value: string) => {
+    if (!pendingRel) return;
+    const label = sanitizeC4Text(value) || C4_DEFAULT_RELATIONSHIP_LABEL;
+    const { sourceId, targetId } = pendingRel;
+    setPendingRel(null);
+    onEdit?.(
+      { kind: 'add-relationship', sourceId, targetId, label },
+      { positions: buildPositions() },
+    );
   };
 
   // Clear drag positions once manualPositions has absorbed the persisted values.
@@ -503,15 +578,20 @@ export function C4InteractiveRenderer({
       editing={
         canEdit
           ? {
-              placementKind,
+              menu,
               pending,
+              pendingRel,
               connectSourceId,
               connectPointer,
-              onSelectKind: setPlacementKind,
-              onPlace: handlePlace,
+              onLongPressPointerDown,
+              onContextMenu: handleContextMenu,
+              onSelectKind: handleSelectKind,
+              onCloseMenu: () => setMenu(null),
               onStartConnect: startConnect,
               onConfirmLabel: handleConfirmLabel,
               onCancelLabel: () => setPending(null),
+              onConfirmRelLabel: handleConfirmRelLabel,
+              onCancelRelLabel: () => setPendingRel(null),
             }
           : null
       }
@@ -540,16 +620,24 @@ interface C4InteractiveSvgProps {
 }
 
 interface EditingProps {
-  placementKind: C4AddableElementKind | null;
+  menu: MenuState | null;
   pending: PendingAdd | null;
+  pendingRel: PendingRel | null;
   connectSourceId: string | null;
   connectPointer: Point | null;
-  onSelectKind: (kind: C4AddableElementKind | null) => void;
-  onPlace: (point: Point) => void;
+  onLongPressPointerDown: (e: React.PointerEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onSelectKind: (kind: C4AddableElementKind) => void;
+  onCloseMenu: () => void;
   onStartConnect: (sourceId: string, e: React.PointerEvent) => void;
   onConfirmLabel: (value: string) => void;
   onCancelLabel: () => void;
+  onConfirmRelLabel: (value: string) => void;
+  onCancelRelLabel: () => void;
 }
+
+/** Width of the relationship label input, in px. */
+const REL_LABEL_WIDTH = 160;
 
 /** Radius of the (invisible) touch target of a connect handle, in SVG units. */
 const CONNECT_HANDLE_HIT_RADIUS = 16;
@@ -631,38 +719,6 @@ function C4InteractiveSvg({
     return { svgWidth: w, svgHeight: h };
   }, [layout.width, layout.height, layout.viewBoxX, layout.viewBoxY, legendInfo, legendPositionOverride]);
 
-  // Placement: the pointer that went down on the placement layer owns the tap.
-  const placementPointerRef = useRef<number | null>(null);
-  const placing = editing !== null && editing.placementKind !== null;
-  useEffect(() => {
-    if (!placing) {
-      placementPointerRef.current = null;
-      return;
-    }
-    // Runs after React's own handlers (root before window), so a tap has already
-    // been placed by the time the owner is cleared here.
-    const clear = (e: PointerEvent) => {
-      if (e.pointerId === placementPointerRef.current) placementPointerRef.current = null;
-    };
-    window.addEventListener('pointerup', clear);
-    window.addEventListener('pointercancel', clear);
-    return () => {
-      window.removeEventListener('pointerup', clear);
-      window.removeEventListener('pointercancel', clear);
-    };
-  }, [placing]);
-
-  const clientToSvg = (clientX: number, clientY: number): Point | null => {
-    const svg = svgRef.current;
-    const ctm = svg?.getScreenCTM();
-    if (!svg || !ctm) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = clientX;
-    pt.y = clientY;
-    const p = pt.matrixTransform(ctm.inverse());
-    return { x: p.x, y: p.y };
-  };
-
   const connectSource = editing?.connectSourceId
     ? layout.nodes.find((n) => n.id === editing.connectSourceId)
     : undefined;
@@ -671,7 +727,14 @@ function C4InteractiveSvg({
       ? findElementAt(layout.nodes, editing.connectPointer)
       : null;
   const accent = 'var(--c4-accent, #3b82f6)';
-  const gesturesIdle = editing !== null && editing.placementKind === null && editing.pending === null;
+  const gesturesIdle =
+    editing !== null && editing.menu === null && editing.pending === null && editing.pendingRel === null;
+  const pendingRelNodes = editing?.pendingRel
+    ? {
+        source: layout.nodes.find((n) => n.id === editing.pendingRel!.sourceId),
+        target: layout.nodes.find((n) => n.id === editing.pendingRel!.targetId),
+      }
+    : null;
 
   const svgElement = (
       <svg
@@ -681,9 +744,23 @@ function C4InteractiveSvg({
         viewBox={`${layout.viewBoxX} ${layout.viewBoxY} ${svgWidth} ${svgHeight}`}
         xmlns="http://www.w3.org/2000/svg"
         data-diagram="c4"
+        // Capture phase: a press on a boundary also starts a move-drag, whose own
+        // handler stops propagation. Only attached when editing is on.
+        onPointerDownCapture={editing ? (e) => {
+          // A right-click is a menu request, not the start of a move-drag.
+          if (e.pointerType === 'mouse' && e.button === 2) {
+            e.stopPropagation();
+            return;
+          }
+          editing.onLongPressPointerDown(e);
+        } : undefined}
+        onContextMenu={editing ? editing.onContextMenu : undefined}
         style={{
           fontFamily: 'system-ui, -apple-system, sans-serif',
           cursor: isEditMode ? (draggedNodeId ? 'grabbing' : 'default') : 'default',
+          // A long-press must open the menu, not the browser's text-selection and
+          // callout. Edit mode with a callback only; read-only renders keep defaults.
+          ...(editing ? { WebkitTouchCallout: 'none', userSelect: 'none', WebkitUserSelect: 'none' } : {}),
         }}
       >
         {/* Use the exported renderer content for stable API */}
@@ -813,30 +890,18 @@ function C4InteractiveSvg({
           />
         )}
 
-        {/* Placement layer: above everything while a kind is armed. The tap
-            places on pointerup of the same pointer; pointercancel abandons it. */}
-        {editing?.placementKind && (
-          <rect
-            data-placement-layer=""
-            x={layout.viewBoxX}
-            y={layout.viewBoxY}
-            width={svgWidth}
-            height={svgHeight}
-            fill="transparent"
-            style={{ cursor: 'crosshair', touchAction: 'none' }}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              if (placementPointerRef.current === null) placementPointerRef.current = e.pointerId;
-            }}
-            onPointerUp={(e) => {
-              if (e.pointerId !== placementPointerRef.current) return;
-              placementPointerRef.current = null;
-              const p = clientToSvg(e.clientX, e.clientY);
-              if (p) editing.onPlace(p);
-            }}
-            onPointerCancel={() => {
-              placementPointerRef.current = null;
-            }}
+        {/* Ghost of a connection waiting for its label; not in the source yet */}
+        {pendingRelNodes?.source && pendingRelNodes.target && (
+          <line
+            data-pending-relationship=""
+            x1={pendingRelNodes.source.x + pendingRelNodes.source.width / 2}
+            y1={pendingRelNodes.source.y + pendingRelNodes.source.height / 2}
+            x2={pendingRelNodes.target.x + pendingRelNodes.target.width / 2}
+            y2={pendingRelNodes.target.y + pendingRelNodes.target.height / 2}
+            stroke={accent}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            style={{ pointerEvents: 'none' }}
           />
         )}
       </svg>
@@ -848,16 +913,21 @@ function C4InteractiveSvg({
 
   return (
     <div style={{ position: 'relative' }}>
-      <EditPalette
-        activeKind={editing.placementKind}
-        disabled={editing.pending !== null}
-        isDarkMode={isDarkMode}
-        onSelect={editing.onSelectKind}
-      />
-      {/* Own positioning context, so the label input is offset from the SVG's
-          origin and not from the palette above it. */}
+      {/* Own positioning context, so the menu and the label inputs are offset from
+          the SVG's origin. */}
       <div style={{ position: 'relative' }}>
         {svgElement}
+        {editing.menu && (
+          <EditMenu
+            // Offset from the point so a finger that opened it is not under an item.
+            left={(editing.menu.x - layout.viewBoxX) * scale + 8}
+            top={(editing.menu.y - layout.viewBoxY) * scale + 8}
+            isDarkMode={isDarkMode}
+            originPointerId={editing.menu.pointerId}
+            onSelect={editing.onSelectKind}
+            onClose={editing.onCloseMenu}
+          />
+        )}
         {editing.pending && (
           <LabelInput
             left={(editing.pending.x - layout.viewBoxX) * scale}
@@ -868,6 +938,19 @@ function C4InteractiveSvg({
             isDarkMode={isDarkMode}
             onConfirm={editing.onConfirmLabel}
             onCancel={editing.onCancelLabel}
+          />
+        )}
+        {editing.pendingRel && (
+          <LabelInput
+            left={(editing.pendingRel.x - layout.viewBoxX) * scale - REL_LABEL_WIDTH / 2}
+            top={(editing.pendingRel.y - layout.viewBoxY) * scale - 14}
+            width={REL_LABEL_WIDTH}
+            height={28}
+            ariaLabel="Relationship label"
+            initialValue={C4_DEFAULT_RELATIONSHIP_LABEL}
+            isDarkMode={isDarkMode}
+            onConfirm={editing.onConfirmRelLabel}
+            onCancel={editing.onCancelRelLabel}
           />
         )}
       </div>

@@ -1,5 +1,6 @@
 /**
- * LabelInput - inline label editor shown over a newly placed element.
+ * LabelInput - inline label editor shown over a newly placed element, or at the
+ * midpoint of a newly connected pair.
  *
  * An HTML input over the SVG rather than a `<foreignObject>`: foreignObject has
  * known focus and keyboard quirks on iPadOS Safari. The host positions it in
@@ -17,6 +18,8 @@ export interface LabelInputProps {
   top: number;
   width: number;
   height: number;
+  /** Accessible name; defaults to the element label */
+  ariaLabel?: string;
   /** Pre-filled placeholder label, selected on focus */
   initialValue: string;
   isDarkMode: boolean;
@@ -29,6 +32,7 @@ export function LabelInput({
   top,
   width,
   height,
+  ariaLabel = 'Element label',
   initialValue,
   isDarkMode,
   onConfirm,
@@ -56,7 +60,7 @@ export function LabelInput({
       ref={inputRef}
       type="text"
       data-c4-label-input=""
-      aria-label="Element label"
+      aria-label={ariaLabel}
       defaultValue={initialValue}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {

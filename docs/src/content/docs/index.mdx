@@ -23,9 +23,9 @@ until you've already built against it. Four things this package does **not** do:
    auto-detection: those are Lexical-bound and stayed behind in `@liminis/editor`
    (`C4Component.tsx`), so a host still needs its own "edit the source text" surface.
    What the package *does* offer (from the release after 0.1.6) is adding: in edit mode
-   `C4InteractiveRenderer` lets a user **add an element** (pick a kind, click the canvas,
-   name it inline) and **add a relationship** (drag from one element to another), and
-   reports each as an edit. `applyC4Edit` in `./core` turns that edit into new source
+   `C4InteractiveRenderer` lets a user **add an element** (right-click the canvas, or
+   long-press on touch, pick a kind, name it inline) and **add a relationship** (drag
+   from one element to another, then label it inline), and reports each as an edit. `applyC4Edit` in `./core` turns that edit into new source
    text — one inserted line, nothing else touched — and the host applies it. Delete,
    rename, re-parent and editing an existing relationship are not supported; those stay
    source edits. See

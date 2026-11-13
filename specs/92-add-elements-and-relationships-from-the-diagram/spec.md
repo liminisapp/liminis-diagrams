@@ -96,7 +96,7 @@ Design background lives in `ideas/structural-editing.md` (a pre-spec sketch). It
 
 ### User Story 1 - Add an element where I place it (Priority: P1)
 
-In edit mode, I choose an element kind, place it on the canvas (at the top level or inside an existing boundary), name it with an inline label input, and a new element appears exactly where I placed it. The host receives a one-line source insertion and applies it.
+In edit mode, I open a menu on the canvas (right-click, or a long-press on touch) at the top level or inside an existing boundary, choose an element kind, name it with an inline label input, and a new element appears exactly where I opened the menu. The host receives a one-line source insertion and applies it.
 
 **Why this priority**: Adding a box is the most basic structural edit and unblocks everything else. The headless edit function that powers it is also the foundation for relationships.
 
@@ -110,7 +110,11 @@ In edit mode, I choose an element kind, place it on the canvas (at the top level
 4. **Given** an existing element whose alias equals the slug of the new label, **When** I add the element, **Then** the generated alias is unique and a valid identifier.
 5. **Given** a label with quotes or other characters special in C4-PlantUML, **When** I add the element, **Then** the inserted line is correctly quoted/escaped and the source still parses.
 6. **Given** I have placed a new element, **When** the inline label input appears, **Then** it is pre-filled with a kind-appropriate placeholder label, and confirming it (as is or edited) reports the add with that label.
-7. **Given** the inline label input is open, **When** I cancel it (Escape or `pointercancel`), **Then** nothing is inserted and no stuck state remains.
+7. **Given** the inline label input is open, **When** I cancel it (Escape or losing focus), **Then** nothing is inserted and no stuck state remains.
+8. **Given** edit mode, **When** I right-click empty canvas or a boundary, **Then** a menu lists the addable kinds (Person, System, Container, Component, SystemDb, ContainerDb, ComponentDb) and choosing one places the element at the clicked point (inside the boundary if the click was over one) and shows the inline label input.
+9. **Given** a touch device, **When** I press and hold on empty canvas or a boundary for about 500 ms without significant movement, **Then** the same menu opens; if I move past the threshold, release early, or the pointer is cancelled, no menu opens, so a drag never opens one.
+10. **Given** the menu is open, **When** I press Escape, click outside it, or its originating pointer is cancelled, **Then** it closes and nothing is reported.
+11. **Given** edit mode with an `onEdit` callback, **When** I right-click the diagram, **Then** the browser's native context menu is suppressed; in a read-only render, or without `onEdit`, it is not.
 
 ---
 
@@ -130,6 +134,7 @@ In edit mode, I drag from one element to another and a `Rel` between them is add
 4. **Given** a connect-drag in progress, **When** the pointer is cancelled (e.g. `pointercancel` on iPadOS) or released over empty canvas, **Then** nothing is inserted and no stuck state remains.
 5. **Given** a read-only render (not edit mode), **Then** no add or connect affordance is present.
 6. **Given** a boundary in the diagram, **When** I drag a connection that starts or ends on the boundary, **Then** no relationship is created.
+7. **Given** a connect-drag released on a valid target, **When** the release happens, **Then** an inline label input appears near the midpoint of the new edge with "Uses" as its value; Enter confirms and reports the relationship with that label, an empty value falls back to "Uses", and Escape or losing focus cancels and reports nothing. The source is unchanged until the label is confirmed.
 
 ---
 
@@ -156,6 +161,9 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - Source with no elements yet (insertion falls back to before `@enduml`, or end of file).
 - Source with no top-level `Rel` (insertion goes after the last top-level element).
 - Boundary on a single line vs. a multi-line block; an empty boundary with no siblings to copy indentation from; tabs vs. spaces; CRLF line endings.
+- A long-press that starts on an element, a connect handle or the legend opens no menu; a mouse never long-presses (it has a right button).
+- A right-click on an element opens no menu, but the native menu is still suppressed in edit mode.
+- A relationship label that is empty or whitespace falls back to "Uses".
 - Labels containing double quotes, backslashes, commas, parentheses or non-ASCII; labels that are empty or whitespace; labels that slug to nothing (e.g. only symbols).
 - Alias collisions with an existing alias, with a macro keyword, or repeated collisions (`cache`, `cache_2`, …).
 - A drag that starts and ends on the same element (self-relationship); a duplicate of an existing relationship between the same pair.
@@ -178,7 +186,7 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **FR-010**: Every source produced by an edit MUST parse with `parseC4` without errors and contain the new element or relationship.
 - **FR-011**: Locating insertion points MUST be supported by source-location information recorded by the parser (element, relationship and boundary line spans, including a boundary's closing line), added without changing the existing shape of parse results for current consumers.
 - **FR-012**: The interactive renderer MUST report an edit through a callback carrying the edit description and, for added elements, the position where the user placed them. It MUST NOT apply the edit itself or write anywhere.
-- **FR-013**: In edit mode only, the renderer MUST offer an add-element affordance: choose a kind, place it on the canvas, optionally inside a boundary. The addable kinds are Person, System, Container and Component, plus the `Db` (cylinder) variant of System, Container and Component. `_Ext`, `Queue`, boundaries and deployment nodes are not offered.
+- **FR-013**: In edit mode only, the renderer MUST offer an add-element affordance: a context menu opened on the canvas (FR-028), where choosing a kind places the element at the point the menu was opened, optionally inside a boundary. The addable kinds are Person, System, Container and Component, plus the `Db` (cylinder) variant of System, Container and Component. `_Ext`, `Queue`, boundaries and deployment nodes are not offered.
 - **FR-014**: In edit mode only, the renderer MUST offer a connect gesture: dragging from one element to another creates a relationship.
 - **FR-015**: Move-drag and connect-drag MUST be distinguishable gestures; existing move behaviour MUST be unchanged.
 - **FR-016**: New interactions MUST use pointer events and MUST handle `pointercancel`, leaving no stuck gesture state.
@@ -193,6 +201,10 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **FR-025**: The UI MUST NOT enforce C4 nesting rules (no warning, no blocking): an element may be added in any boundary regardless of kind, matching what the parser accepts.
 - **FR-026**: The inline label input MUST be usable with pointer and keyboard (confirm and cancel), appear only in edit mode, and leave the source unchanged until the label is confirmed.
 - **FR-027**: On the first structural edit, the position of every currently visible node MUST be pinned (reported to the host together with the new element's position) so that adding a node does not reshuffle elements that previously had only automatic positions. Hosts then store these positions as manual positions, merged with existing ones.
+- **FR-028**: The add-element menu MUST open on right-click over empty canvas or a boundary, and, for touch, on a long-press of about 500 ms with no significant movement, built on pointer events. Movement past the threshold, early release or `pointercancel` MUST abandon the press so a drag never opens a menu. The menu MUST close, reporting nothing, on Escape, a pointerdown outside it, or `pointercancel` of the pointer that opened it. There is no toolbar palette.
+- **FR-029**: In edit mode with an `onEdit` callback only, the renderer MUST suppress the browser's native context menu over the diagram. Read-only renders, and hosts without `onEdit`, keep the default behaviour.
+- **FR-030**: When a connect-drag is released on a valid target, the renderer MUST show the same inline label input near the midpoint of the new edge, with "Uses" as its value. Enter confirms; an empty value falls back to "Uses"; Escape or losing focus cancels. The label is fixed before the edit is reported, so `add-relationship` is unchanged and the source stays untouched until confirmed.
+- **FR-031**: The menu MUST expose a styling hook (`data-c4-menu`) in place of the removed palette hook (`data-c4-palette`), and the recipes MUST document it.
 
 ### Key Entities *(if applicable)*
 
@@ -217,10 +229,10 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 
 ## Assumptions
 
-- Relationships added by the UI use plain `Rel` with a label and no technology argument (technology can be added by hand later); the edit function accepts an optional technology. The relationship label's default is a placeholder or empty, to be settled in planning.
+- Relationships added by the UI use plain `Rel` with a label and no technology argument (technology can be added by hand later); the edit function accepts an optional technology. The relationship's label defaults to "Uses" and can be edited inline when the connection is created (FR-030); renaming an existing element or relationship is out of scope and will be a separate `rename` edit kind.
 - Structural editing is disabled while the source does not parse, since `parseC4` yields no diagram to interact with.
 - Alias generation is a slug of the label with a numeric suffix on collision, since the issue only requires uniqueness and validity.
-- Confirming an empty inline label falls back to the placeholder rather than inserting an empty label; cancelling (Escape or `pointercancel`) inserts nothing.
+- Confirming an empty inline label falls back to the placeholder rather than inserting an empty label; cancelling (Escape or losing focus) inserts nothing.
 - Adding elements and relationships is undone through whatever undo the host already has; this package adds none.
 - The `liminis-editor` merge-positions change is separate work in that repo; this issue only makes the right host behaviour easy and documents it.
 - The pinning in FR-027 applies the first time a diagram receives a structural edit in a session; subsequent edits only need the new element's position, since all nodes are then manual.

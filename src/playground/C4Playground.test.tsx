@@ -168,11 +168,10 @@ describe('C4Playground structural editing', () => {
           [r.getAttribute('x'), r.getAttribute('y')],
         ]),
       );
-    const add = (kind: string, at: { x: number; y: number }, label: string) => {
+    const add = (kind: string, at: { x: number; y: number }, label: string, target?: Element) => {
+      // Right-click the canvas (the boundary's own rect when inside one), pick a kind.
+      fireEvent.contextMenu(target ?? c.querySelector('svg[data-diagram]')!, { clientX: at.x, clientY: at.y });
       fireEvent.click(c.querySelector(`[data-kind="${kind}"]`)!);
-      const layer = c.querySelector('[data-placement-layer]')!;
-      fireEvent.pointerDown(layer, { pointerId: 1, clientX: at.x, clientY: at.y });
-      fireEvent.pointerUp(layer, { pointerId: 1, clientX: at.x, clientY: at.y });
       const input = c.querySelector<HTMLInputElement>('[data-c4-label-input]')!;
       fireEvent.change(input, { target: { value: label } });
       fireEvent.keyDown(input, { key: 'Enter' });
@@ -207,7 +206,7 @@ describe('C4Playground structural editing', () => {
     const { c, source, add } = setup();
     const before = source();
     const b = c.querySelector('[data-node-id="b"]')!;
-    add('component', { x: Number(b.getAttribute('x')) + 5, y: Number(b.getAttribute('y')) + 5 }, 'Cache');
+    add('component', { x: Number(b.getAttribute('x')) + 5, y: Number(b.getAttribute('y')) + 5 }, 'Cache', b);
     expect(insertedLine(before, source())).toBe('  Component(cache, "Cache")');
     const lines = source().split('\n');
     expect(lines.indexOf('  Component(cache, "Cache")')).toBe(lines.indexOf('}') - 1);
@@ -226,8 +225,14 @@ describe('C4Playground structural editing', () => {
     fireEvent.pointerDown(handle, { pointerId: 1, clientX: 1, clientY: 1 });
     fireEvent.pointerMove(window, { pointerId: 1, clientX: target.x, clientY: target.y });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: target.x, clientY: target.y });
+    // Nothing is inserted until the relationship is labelled.
+    expect(source()).toBe(before);
+    const input = c.querySelector<HTMLInputElement>('[aria-label="Relationship label"]')!;
+    expect(input.value).toBe('Uses');
+    fireEvent.change(input, { target: { value: 'Calls' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(insertedLine(before, source())).toBe('Rel(api, ext, "Uses")');
+    expect(insertedLine(before, source())).toBe('Rel(api, ext, "Calls")');
     expect(source()).toContain("' people");
     expect(source()).toContain('Rel_D(user, api, "Uses", "HTTPS")');
     expect(rects()).toEqual(r); // nothing moved
@@ -242,11 +247,9 @@ describe('C4Playground structural editing', () => {
     // A single-line `{ }` boundary cannot take a pure insertion; the point is
     // inside it, so the edit is refused and the source is untouched.
     const area = c.querySelector('[data-node-id="b"]')!;
-    fireEvent.click(c.querySelector('[data-kind="person"]')!);
-    const layer = c.querySelector('[data-placement-layer]')!;
     const p = { x: Number(area.getAttribute('x')) + 5, y: Number(area.getAttribute('y')) + 5 };
-    fireEvent.pointerDown(layer, { pointerId: 1, clientX: p.x, clientY: p.y });
-    fireEvent.pointerUp(layer, { pointerId: 1, clientX: p.x, clientY: p.y });
+    fireEvent.contextMenu(area, { clientX: p.x, clientY: p.y });
+    fireEvent.click(c.querySelector('[data-kind="person"]')!);
     fireEvent.keyDown(c.querySelector('[data-c4-label-input]')!, { key: 'Enter' });
     expect(c.querySelector('[role="alert"]')).not.toBeNull();
     expect(c.querySelector<HTMLTextAreaElement>('.c4-playground__source')!.value).toBe(

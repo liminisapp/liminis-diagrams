@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, fireEvent, act } from '@testing-library/react';
 import { C4InteractiveRenderer } from './C4InteractiveRenderer';
 import { parseC4 } from '../core/parser';
 import { layoutC4Diagram } from '../core/layout';
@@ -72,14 +72,22 @@ const centre = (r: { x: number; y: number; width: number; height: number }) => (
   y: r.y + r.height / 2,
 });
 
-function arm(c: HTMLElement, kind: string) {
+const svgOf = (c: HTMLElement) => q(c, 'svg[data-diagram]')!;
+const menuOf = (c: HTMLElement) => q(c, '[data-c4-menu]');
+/** Right-click at a point (the canvas background, unless a target is given). */
+function rightClick(c: HTMLElement, p: { x: number; y: number }, target?: Element) {
+  return fireEvent.contextMenu(target ?? svgOf(c), { clientX: p.x, clientY: p.y });
+}
+function choose(c: HTMLElement, kind: string) {
   fireEvent.click(q(c, `[data-kind="${kind}"]`)!);
 }
-function tap(c: HTMLElement, p: { x: number; y: number }, pointerId = 1) {
-  const layer = q(c, '[data-placement-layer]')!;
-  fireEvent.pointerDown(layer, { pointerId, clientX: p.x, clientY: p.y });
-  fireEvent.pointerUp(layer, { pointerId, clientX: p.x, clientY: p.y });
+/** Open the menu by right-click at a point, choose a kind: places the element there. */
+function place(c: HTMLElement, kind: string, p: { x: number; y: number }, target?: Element) {
+  rightClick(c, p, target);
+  choose(c, kind);
 }
+const relInput = (c: HTMLElement) =>
+  q(c, '[data-c4-label-input][aria-label="Relationship label"]') as HTMLInputElement | null;
 const labelInput = (c: HTMLElement) => q(c, '[data-c4-label-input]') as HTMLInputElement | null;
 
 function connect(c: HTMLElement, fromId: string, to: { x: number; y: number }) {
@@ -90,11 +98,11 @@ function connect(c: HTMLElement, fromId: string, to: { x: number; y: number }) {
 }
 
 describe('add element', () => {
-  it('places at the top level, names inline, and reports one add-element edit', () => {
+  it('places at the right-clicked point, names inline, and reports one add-element edit', () => {
     const { container, onEdit } = setup();
-    arm(container, 'system');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'system', { x: 900, y: 900 });
 
+    expect(menuOf(container)).toBeNull(); // choosing closes the menu
     expect(onEdit).not.toHaveBeenCalled(); // nothing until the label is confirmed
     expect(q(container, '[data-pending-element]')).not.toBeNull();
     const input = labelInput(container)!;
@@ -105,16 +113,33 @@ describe('add element', () => {
     expect(onEdit).toHaveBeenCalledTimes(1);
     const [edit, ctx] = onEdit.mock.calls[0];
     expect(edit).toEqual({ kind: 'add-element', elementKind: 'system', label: 'Billing', alias: 'billing' });
-    // Placed so its centre is where the user tapped (240x80 node).
+    // Placed so its centre is where the user clicked (240x80 node).
     expect(ctx.positions.billing).toEqual({ x: 780, y: 860 });
     expect(labelInput(container)).toBeNull();
     expect(q(container, '[data-pending-element]')).toBeNull();
   });
 
+  it('lists exactly the addable kinds', () => {
+    const { container } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    const kinds = Array.from(container.querySelectorAll('[data-c4-menu] [data-kind]')).map((b) =>
+      b.getAttribute('data-kind'),
+    );
+    expect(kinds).toEqual([
+      'person',
+      'system',
+      'container',
+      'component',
+      'systemDb',
+      'containerDb',
+      'componentDb',
+    ]);
+    expect(menuOf(container)!.getAttribute('role')).toBe('menu');
+  });
+
   it('uses a generated unique alias when the label collides with an existing one', () => {
     const { container, onEdit } = setup();
-    arm(container, 'person');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'person', { x: 900, y: 900 });
     const input = labelInput(container)!;
     fireEvent.change(input, { target: { value: 'User' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -123,97 +148,295 @@ describe('add element', () => {
 
   it('falls back to the placeholder when the label is confirmed empty', () => {
     const { container, onEdit } = setup();
-    arm(container, 'containerDb');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'containerDb', { x: 900, y: 900 });
     const input = labelInput(container)!;
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onEdit.mock.calls[0][0]).toMatchObject({ label: 'Database', alias: 'database' });
   });
 
-  it('reports the enclosing boundary as parent when placed inside one', () => {
+  it('reports the enclosing boundary as parent when opened inside one', () => {
     const { container, onEdit } = setup();
     const b = rectOf(container, 'b');
-    arm(container, 'component');
-    tap(container, { x: b.x + 5, y: b.y + 5 });
+    // Right-click lands on the boundary's own hit rect, as it would in a browser.
+    place(container, 'component', { x: b.x + 5, y: b.y + 5 }, q(container, '[data-node-id="b"]')!);
     fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
     expect(onEdit.mock.calls[0][0]).toMatchObject({ kind: 'add-element', elementKind: 'component', parent: 'b' });
   });
 
-  it('omits parent when placed outside every boundary', () => {
+  it('omits parent when opened outside every boundary', () => {
     const { container, onEdit } = setup();
-    arm(container, 'person');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'person', { x: 900, y: 900 });
     fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
     expect(onEdit.mock.calls[0][0]).not.toHaveProperty('parent');
   });
 
-  it('reports nothing on Escape, and leaves no stuck state', () => {
+  it('opens no menu over an element, but still suppresses the native one', () => {
+    const { container } = setup();
+    const notPrevented = rightClick(container, centre(rectOf(container, 'ext')), q(container, '[data-node-id="ext"]')!);
+    expect(notPrevented).toBe(false);
+    expect(menuOf(container)).toBeNull();
+  });
+
+  it('suppresses the native context menu over the canvas', () => {
+    const { container } = setup();
+    expect(rightClick(container, { x: 900, y: 900 })).toBe(false);
+    expect(menuOf(container)).not.toBeNull();
+  });
+
+  it('reports nothing on Escape in the label input, and leaves no stuck state', () => {
     const { container, onEdit } = setup();
-    arm(container, 'system');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'system', { x: 900, y: 900 });
     fireEvent.keyDown(labelInput(container)!, { key: 'Escape' });
     expect(onEdit).not.toHaveBeenCalled();
     expect(labelInput(container)).toBeNull();
     expect(q(container, '[data-pending-element]')).toBeNull();
-    expect(q(container, '[data-placement-layer]')).toBeNull();
     // A new add works afterwards.
-    arm(container, 'system');
-    expect(q(container, '[data-placement-layer]')).not.toBeNull();
+    rightClick(container, { x: 900, y: 900 });
+    expect(menuOf(container)).not.toBeNull();
   });
 
   it('reports nothing when the input loses focus', () => {
     const { container, onEdit } = setup();
-    arm(container, 'system');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'system', { x: 900, y: 900 });
     fireEvent.blur(labelInput(container)!);
     expect(onEdit).not.toHaveBeenCalled();
     expect(labelInput(container)).toBeNull();
   });
 
-  it('ignores a pointercancel from an unrelated pointer while armed or naming', () => {
-    const a = setup();
-    arm(a.container, 'system');
-    fireEvent.pointerCancel(window, { pointerId: 2 });
-    expect(q(a.container, '[data-placement-layer]')).not.toBeNull();
-
-    const b = setup();
-    arm(b.container, 'system');
-    tap(b.container, { x: 900, y: 900 });
-    fireEvent.pointerCancel(window, { pointerId: 2 });
-    expect(labelInput(b.container)).not.toBeNull();
-    expect(b.onEdit).not.toHaveBeenCalled();
-  });
-
-  it('does not place when the pointer is cancelled between down and up', () => {
+  it('ignores a pointercancel from an unrelated pointer while naming', () => {
     const { container, onEdit } = setup();
-    arm(container, 'system');
-    const layer = q(container, '[data-placement-layer]')!;
-    fireEvent.pointerDown(layer, { pointerId: 1, clientX: 900, clientY: 900 });
-    fireEvent.pointerCancel(layer, { pointerId: 1 });
-    expect(labelInput(container)).toBeNull();
+    place(container, 'system', { x: 900, y: 900 });
+    fireEvent.pointerCancel(window, { pointerId: 2 });
+    expect(labelInput(container)).not.toBeNull();
     expect(onEdit).not.toHaveBeenCalled();
   });
 
-  it('Escape disarms a kind waiting for placement', () => {
+  it('has no palette any more', () => {
     const { container } = setup();
-    arm(container, 'system');
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(q(container, '[data-placement-layer]')).toBeNull();
-  });
-
-  it('toggling the armed kind again disarms it', () => {
-    const { container } = setup();
-    arm(container, 'system');
-    arm(container, 'system');
-    expect(q(container, '[data-placement-layer]')).toBeNull();
+    expect(q(container, '[data-c4-palette]')).toBeNull();
+    expect(q(container, '[role="toolbar"]')).toBeNull();
   });
 });
 
+describe('context menu', () => {
+  it('closes on Escape and reports nothing', () => {
+    const { container, onEdit } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(menuOf(container)).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it('closes on a pointerdown outside it, but not inside it', () => {
+    const { container, onEdit } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    fireEvent.pointerDown(q(container, '[data-kind="system"]')!, { pointerId: 1 });
+    expect(menuOf(container)).not.toBeNull();
+    fireEvent.pointerDown(document.body, { pointerId: 1 });
+    expect(menuOf(container)).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it('closes on pointercancel of the pointer that opened it, and ignores other pointers', () => {
+    vi.useFakeTimers();
+    try {
+      const { container, onEdit } = setup();
+      longPress(container, { x: 900, y: 900 }, 7);
+      expect(menuOf(container)).not.toBeNull();
+      fireEvent.pointerCancel(window, { pointerId: 8 });
+      expect(menuOf(container)).not.toBeNull();
+      fireEvent.pointerCancel(window, { pointerId: 7 });
+      expect(menuOf(container)).toBeNull();
+      expect(onEdit).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('supports arrow-key navigation between items', () => {
+    const { container } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    const first = q(container, '[data-kind="person"]') as HTMLElement;
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(menuOf(container)!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(q(container, '[data-kind="system"]'));
+    fireEvent.keyDown(menuOf(container)!, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('does not start a move-drag on a right-click', () => {
+    const { container, onPositionChange } = setup();
+    const b = q(container, '[data-node-id="b"]')!;
+    fireEvent.pointerDown(b, { pointerId: 1, pointerType: 'mouse', button: 2, clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: 'mouse', button: 2, clientX: 5, clientY: 5 });
+    expect(onPositionChange).not.toHaveBeenCalled();
+  });
+});
+
+function pressDown(c: HTMLElement, p: { x: number; y: number }, pointerId = 1, target?: Element, pointerType = 'touch') {
+  fireEvent.pointerDown(target ?? svgOf(c), {
+    pointerId,
+    pointerType,
+    isPrimary: true,
+    button: 0,
+    clientX: p.x,
+    clientY: p.y,
+  });
+}
+/** A touch held still on the canvas until the menu opens. */
+function longPress(c: HTMLElement, p: { x: number; y: number }, pointerId = 1, target?: Element) {
+  pressDown(c, p, pointerId, target);
+  act(() => {
+    vi.advanceTimersByTime(500);
+  });
+}
+
+describe('long-press', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('opens the same menu after ~500 ms without movement, and places at the press point', () => {
+    const { container, onEdit } = setup();
+    pressDown(container, { x: 900, y: 900 });
+    act(() => {
+      vi.advanceTimersByTime(499);
+    });
+    expect(menuOf(container)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(menuOf(container)).not.toBeNull();
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 900, clientY: 900 });
+    expect(menuOf(container)).not.toBeNull(); // lifting the finger keeps it open
+
+    choose(container, 'system');
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[0][1].positions.system).toEqual({ x: 780, y: 860 });
+  });
+
+  it('works inside a boundary, reporting it as the parent', () => {
+    const { container, onEdit } = setup();
+    const b = rectOf(container, 'b');
+    longPress(container, { x: b.x + 5, y: b.y + 5 }, 1, q(container, '[data-node-id="b"]')!);
+    expect(menuOf(container)).not.toBeNull();
+    choose(container, 'component');
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[0][0]).toMatchObject({ parent: 'b' });
+  });
+
+  it('is cancelled by movement past the threshold, so a drag never opens a menu', () => {
+    const { container } = setup();
+    pressDown(container, { x: 900, y: 900 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 930, clientY: 900 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+  });
+
+  it('tolerates a small wobble', () => {
+    const { container } = setup();
+    pressDown(container, { x: 900, y: 900 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 903, clientY: 902 });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(menuOf(container)).not.toBeNull();
+  });
+
+  it('is cancelled by pointercancel and by lifting early, leaving nothing running', () => {
+    const { container } = setup();
+    pressDown(container, { x: 900, y: 900 });
+    fireEvent.pointerCancel(window, { pointerId: 1 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+
+    pressDown(container, { x: 900, y: 900 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 900, clientY: 900 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('is not started by a mouse, which has a right button', () => {
+    const { container } = setup();
+    pressDown(container, { x: 900, y: 900 }, 1, undefined, 'mouse');
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+  });
+
+  it('is not started over an element, a connect handle, or by a second finger', () => {
+    const { container } = setup();
+    pressDown(container, centre(rectOf(container, 'ext')), 1, q(container, '[data-node-id="ext"]')!);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+    fireEvent.pointerUp(window, { pointerId: 1 });
+
+    // Second finger while the first is pending cancels the press.
+    pressDown(container, { x: 900, y: 900 }, 1);
+    pressDown(container, { x: 950, y: 950 }, 2);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+  });
+
+  it('does nothing in a read-only render', () => {
+    const { container } = setup({ isEditMode: false });
+    pressDown(container, { x: 900, y: 900 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(menuOf(container)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/** Connect, then confirm the label input as it stands. */
+function connectAndConfirm(c: HTMLElement, fromId: string, to: { x: number; y: number }, label?: string) {
+  connect(c, fromId, to);
+  const input = relInput(c)!;
+  if (label !== undefined) fireEvent.change(input, { target: { value: label } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+}
+
 describe('connect', () => {
-  it('reports one add-relationship when dragging from one element to another', () => {
-    const { container, onEdit, onPositionChange } = setup();
+  it('asks for a label on release, defaulting to "Uses", and reports nothing yet', () => {
+    const { container, onEdit } = setup();
     connect(container, 'user', centre(rectOf(container, 'ext')));
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(relInput(container)!.value).toBe('Uses');
+    expect(q(container, '[data-pending-relationship]')).not.toBeNull();
+    expect(q(container, '[data-connect-line]')).toBeNull();
+  });
+
+  it('puts the label input near the midpoint of the new edge', () => {
+    const { container } = setup();
+    const a = centre(rectOf(container, 'user'));
+    const b = centre(rectOf(container, 'ext'));
+    connect(container, 'user', b);
+    const input = relInput(container)!;
+    const left = parseFloat(input.style.left) + parseFloat(input.style.width) / 2;
+    const top = parseFloat(input.style.top) + parseFloat(input.style.height) / 2;
+    // Stub CTM and viewBox origin are identity-ish at zoom 1; allow for the viewBox offset.
+    const svg = svgOf(container);
+    const [vx, vy] = svg.getAttribute('viewBox')!.split(' ').map(Number);
+    expect(left).toBeCloseTo((a.x + b.x) / 2 - vx, 0);
+    expect(top).toBeCloseTo((a.y + b.y) / 2 - vy, 0);
+  });
+
+  it('reports one add-relationship with the default label when confirmed as is', () => {
+    const { container, onEdit, onPositionChange } = setup();
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')));
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onEdit.mock.calls[0][0]).toEqual({
       kind: 'add-relationship',
@@ -224,9 +447,51 @@ describe('connect', () => {
     expect(onPositionChange).not.toHaveBeenCalled();
   });
 
+  it('reports the label the user typed', () => {
+    const { container, onEdit } = setup();
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')), 'Sends invoices to');
+    expect(onEdit.mock.calls[0][0]).toEqual({
+      kind: 'add-relationship',
+      sourceId: 'user',
+      targetId: 'ext',
+      label: 'Sends invoices to',
+    });
+    expect(relInput(container)).toBeNull();
+  });
+
+  it('falls back to "Uses" when the label is confirmed empty', () => {
+    const { container, onEdit } = setup();
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')), '   ');
+    expect(onEdit.mock.calls[0][0]).toMatchObject({ label: 'Uses' });
+  });
+
+  it('reports nothing on Escape or blur, and leaves no stuck state', () => {
+    const { container, onEdit } = setup();
+    connect(container, 'user', centre(rectOf(container, 'ext')));
+    fireEvent.keyDown(relInput(container)!, { key: 'Escape' });
+    expect(relInput(container)).toBeNull();
+    expect(q(container, '[data-pending-relationship]')).toBeNull();
+
+    connect(container, 'user', centre(rectOf(container, 'ext')));
+    fireEvent.blur(relInput(container)!);
+    expect(relInput(container)).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+    // A new connect works afterwards.
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it('is exclusive with other gestures while the label input is open', () => {
+    const { container } = setup();
+    connect(container, 'user', centre(rectOf(container, 'ext')));
+    expect(q(container, '[data-connect-handle]')).toBeNull(); // handles hidden
+    rightClick(container, { x: 900, y: 900 });
+    expect(menuOf(container)).toBeNull();
+  });
+
   it('targets the element inside a boundary, not the boundary', () => {
     const { container, onEdit } = setup();
-    connect(container, 'user', centre(rectOf(container, 'api')));
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'api')));
     expect(onEdit.mock.calls[0][0]).toMatchObject({ targetId: 'api' });
   });
 
@@ -245,6 +510,7 @@ describe('connect', () => {
     const b = rectOf(container, 'b');
     connect(container, 'user', { x: b.x + 5, y: b.y + 5 }); // boundary-only area
     connect(container, 'user', centre(rectOf(container, 'user')));
+    expect(relInput(container)).toBeNull(); // no label input either
     expect(onEdit).not.toHaveBeenCalled();
   });
 
@@ -296,17 +562,19 @@ describe('connect', () => {
 describe('gating', () => {
   it('shows no add or connect affordance outside edit mode', () => {
     const { container, onEdit } = setup({ isEditMode: false });
-    expect(q(container, '[data-c4-palette]')).toBeNull();
     expect(q(container, '[data-connect-handle]')).toBeNull();
-    expect(q(container, '[data-placement-layer]')).toBeNull();
+    // The browser's own context menu is left alone, and ours never opens.
+    expect(rightClick(container, { x: 900, y: 900 })).toBe(true);
+    expect(menuOf(container)).toBeNull();
     expect(onEdit).not.toHaveBeenCalled();
   });
 
   it('shows no add or connect affordance without an onEdit callback', () => {
     // liminis-editor passes isEditMode for dragging alone; it must not grow dead buttons.
     const { container } = setup({ onEdit: undefined });
-    expect(q(container, '[data-c4-palette]')).toBeNull();
     expect(q(container, '[data-connect-handle]')).toBeNull();
+    expect(rightClick(container, { x: 900, y: 900 })).toBe(true);
+    expect(menuOf(container)).toBeNull();
     // Dragging still works there.
     expect(container.querySelectorAll('[data-node-id]').length).toBeGreaterThan(0);
   });
@@ -317,13 +585,29 @@ describe('gating', () => {
     expect(root.firstElementChild!.tagName.toLowerCase()).toBe('svg');
   });
 
+  it('drops an open menu and a pending relationship when edit mode is switched off', () => {
+    const diagram = parseC4(SOURCE).diagram!;
+    const props = { diagram, isDarkMode: false, manualPositions: {}, onPositionChange: vi.fn(), onEdit: vi.fn() };
+    const { container, rerender } = render(<C4InteractiveRenderer {...props} isEditMode />);
+    rightClick(container, { x: 900, y: 900 });
+    expect(menuOf(container)).not.toBeNull();
+    rerender(<C4InteractiveRenderer {...props} isEditMode={false} />);
+    expect(menuOf(container)).toBeNull();
+
+    rerender(<C4InteractiveRenderer {...props} isEditMode />);
+    connect(container, 'user', centre(rectOf(container, 'ext')));
+    expect(relInput(container)).not.toBeNull();
+    rerender(<C4InteractiveRenderer {...props} isEditMode={false} />);
+    expect(relInput(container)).toBeNull();
+    expect(props.onEdit).not.toHaveBeenCalled();
+  });
+
   it('drops a half-finished add when edit mode is switched off', () => {
     const diagram = parseC4(SOURCE).diagram!;
     const onEdit = vi.fn();
     const props = { diagram, isDarkMode: false, manualPositions: {}, onPositionChange: vi.fn(), onEdit };
     const { container, rerender } = render(<C4InteractiveRenderer {...props} isEditMode />);
-    arm(container, 'system');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'system', { x: 900, y: 900 });
     expect(labelInput(container)).not.toBeNull();
     rerender(<C4InteractiveRenderer {...props} isEditMode={false} />);
     expect(labelInput(container)).toBeNull();
@@ -338,7 +622,7 @@ describe('pinned positions (FR-027)', () => {
   it('pins every visible node so re-laying out reproduces the pre-edit layout', () => {
     const { container, diagram, onEdit } = setup();
     const before = positionsOf(diagram);
-    connect(container, 'user', centre(rectOf(container, 'ext')));
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')));
     const { positions } = onEdit.mock.calls[0][1];
     for (const id of diagram.elements.map((e) => e.id)) expect(positions[id]).toBeDefined();
     expect(positionsOf(diagram, positions)).toEqual(before);
@@ -347,7 +631,7 @@ describe('pinned positions (FR-027)', () => {
   it('keeps existing manual positions untouched and pins only the rest', () => {
     const manual = { user: { x: 12.5, y: 33.25 } };
     const { container, diagram, onEdit } = setup({ manualPositions: manual });
-    connect(container, 'user', centre(rectOf(container, 'ext')));
+    connectAndConfirm(container, 'user', centre(rectOf(container, 'ext')));
     const { positions } = onEdit.mock.calls[0][1];
     expect(positions.user).toEqual({ x: 12.5, y: 33.25 });
     // Everything now has a position, and laying out with them is a fixed point.
@@ -358,8 +642,7 @@ describe('pinned positions (FR-027)', () => {
 
   it('reports the new element together with the pinned positions', () => {
     const { container, diagram, onEdit } = setup();
-    arm(container, 'system');
-    tap(container, { x: 900, y: 900 });
+    place(container, 'system', { x: 900, y: 900 });
     fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
     const { positions } = onEdit.mock.calls[0][1];
     expect(Object.keys(positions).sort()).toEqual([...diagram.elements.map((e) => e.id), 'system'].sort());
@@ -367,11 +650,11 @@ describe('pinned positions (FR-027)', () => {
 
   it('pins the legend only if the host already positioned it', () => {
     const none = setup();
-    connect(none.container, 'user', centre(rectOf(none.container, 'ext')));
+    connectAndConfirm(none.container, 'user', centre(rectOf(none.container, 'ext')));
     expect(none.onEdit.mock.calls[0][1].positions).not.toHaveProperty('__legend__');
 
     const withLegend = setup({ manualPositions: { __legend__: { x: 1, y: 2 } } });
-    connect(withLegend.container, 'user', centre(rectOf(withLegend.container, 'ext')));
+    connectAndConfirm(withLegend.container, 'user', centre(rectOf(withLegend.container, 'ext')));
     expect(withLegend.onEdit.mock.calls[0][1].positions.__legend__).toEqual({ x: 1, y: 2 });
   });
 });

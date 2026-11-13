@@ -88,7 +88,7 @@ import { C4InteractiveRenderer } from '@liminis/diagrams/react';
 
 ### Add elements and relationships
 
-Pass `onEdit` as well (and keep `isEditMode` on) and the renderer offers a palette to add
+Pass `onEdit` as well (and keep `isEditMode` on) and the renderer offers a right-click (long-press on touch) menu to add
 an element and a handle on each element to drag a relationship to another one. It
 **reports** each as an edit; it never changes your source. `applyC4Edit` turns the edit
 into new source text — exactly one inserted line, nothing else touched — and you store it:

@@ -174,14 +174,27 @@ your host already has.
 In edit mode, **and only when you pass `onEdit`**, `C4InteractiveRenderer` offers two
 things. (A host that passes `isEditMode` for dragging alone sees no change at all.)
 
-- **Add an element.** Pick a kind in the palette (Person, System, Container, Component,
-  and the `Db` variant of System, Container and Component), click the canvas — over a
-  boundary to add it inside — and type a label into the inline input. Enter confirms
-  (an empty label falls back to a placeholder); Escape or losing focus cancels and
-  reports nothing.
+- **Add an element.** Right-click empty canvas — or inside a boundary to add it there — to
+  open a menu of kinds (Person, System, Container, Component, and the `Db` variant of
+  System, Container and Component). On touch, which has no right-click, **press and hold
+  for about half a second** without moving: the same menu opens. Moving the finger
+  further than a few pixels cancels the press, so a drag never opens a menu. Choosing a
+  kind places the element at the point you opened the menu, then a label input appears
+  over it. Enter confirms (an empty label falls back to a placeholder); Escape or losing
+  focus cancels and reports nothing. The menu itself closes on Escape, a click outside it,
+  or `pointercancel` of the pointer that opened it, and reports nothing. While editing is
+  on the browser's own context menu is suppressed over the diagram; a read-only render,
+  and a host that passes `isEditMode` without `onEdit`, keep it.
 - **Add a relationship.** Drag from the dot on an element's right edge to another
-  element. Releasing on empty canvas, on a boundary, or on the same element reports
-  nothing. Boundaries cannot start or end a relationship in this first cut.
+  element. On release a label input appears near the midpoint of the new edge, pre-filled
+  with "Uses": Enter confirms (empty falls back to "Uses"), Escape or losing focus cancels
+  and reports nothing, and the source is untouched until then. Releasing on empty canvas,
+  on a boundary, or on the same element shows no input and reports nothing. Boundaries
+  cannot start or end a relationship in this first cut. This labels the *new* `Rel` only;
+  renaming an existing element or relationship is not offered.
+
+The menu opens over empty canvas or a boundary, not over an element, a connect handle or
+the legend (the native menu is still suppressed there).
 
 Dragging a node still moves it; the connect handle is a separate target, and the two
 gestures are mutually exclusive. All of it uses pointer events and handles
@@ -305,8 +318,10 @@ Four guarantees worth relying on:
   no escape for `"`, so inside a quoted argument `"` becomes `'`, `\` becomes `/`, and
   control characters become spaces. The result reports the label as written.
 
-### Styling the palette
+### Styling the menu
 
-The palette is the package's only built-in control. It uses inline styles and reads
-`--c4-accent`, `--c4-border` and `--c4-bg`, and it carries `data-c4-palette` for
-targeting. The inline label input carries `data-c4-label-input`.
+The add-element menu is the package's only built-in control. It uses inline styles and
+reads `--c4-accent`, `--c4-border` and `--c4-bg`, and it carries `data-c4-menu` for
+targeting (each item has `data-kind`). It replaces the toolbar palette (`data-c4-palette`)
+of earlier drafts, which no longer exists. The inline label inputs — for an element and
+for a relationship — carry `data-c4-label-input`.
