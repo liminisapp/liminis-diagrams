@@ -65,6 +65,9 @@ export function LabelInput({
           settle(() => onConfirm(e.currentTarget.value));
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          // Escape here means "cancel the label", not "close whatever dialog
+          // the host has open around the diagram".
+          e.nativeEvent.stopPropagation();
           settle(onCancel);
         }
       }}
