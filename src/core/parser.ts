@@ -16,8 +16,12 @@ import type {
   C4Properties,
   C4Relationship,
   C4Shape,
+  C4SourceSpans,
+  ElementSpan,
   ParseError,
   ParseResult,
+  ParseResultWithSpans,
+  RelationshipSpan,
 } from './types';
 
 // =============================================================================
@@ -88,6 +92,15 @@ const REL_MACROS = new Set([
   'BiRel', 'BiRel_D', 'BiRel_U', 'BiRel_L', 'BiRel_R',
 ]);
 
+/**
+ * Every macro name the parser recognises (element and relationship macros).
+ * Used by alias generation to keep generated aliases clear of macro names.
+ */
+export const C4_MACRO_NAMES: ReadonlySet<string> = new Set([
+  ...Object.keys(ELEMENT_MACROS),
+  ...REL_MACROS,
+]);
+
 /** Directives and macros to silently skip */
 const SKIP_PREFIXES = ['@startuml', '@enduml', '!include', '!define', 'SHOW_', 'HIDE_', 'title '];
 
@@ -101,6 +114,22 @@ const SKIP_PREFIXES = ['@startuml', '@enduml', '!include', '!define', 'SHOW_', '
 export function parseC4(code: string): ParseResult {
   const parser = new C4PlantUMLParser(code);
   return parser.parse();
+}
+
+/**
+ * Parse C4-PlantUML code and also report where each element and relationship
+ * lives in the source (0-based line numbers). `diagram` and `errors` are exactly
+ * what `parseC4` returns; `spans` is a parallel structure, index-aligned with
+ * `diagram.elements` / `diagram.relationships`, so the AST shape is unchanged.
+ *
+ * Spans exist so that edits can be made as minimal line insertions into the
+ * original text (see `applyC4Edit`). On a failed parse `spans` still describes
+ * whatever was recognised, but `diagram` is null.
+ */
+export function parseC4WithSpans(code: string): ParseResultWithSpans {
+  const parser = new C4PlantUMLParser(code);
+  const result = parser.parse();
+  return { ...result, spans: parser.getSpans() };
 }
 
 /**
@@ -149,6 +178,8 @@ class C4PlantUMLParser {
   private relationships: C4Relationship[] = [];
   private errors: ParseError[] = [];
   private direction: C4Direction | undefined;
+  private elementSpans: ElementSpan[] = [];
+  private relationshipSpans: RelationshipSpan[] = [];
 
   constructor(code: string) {
     this.lines = code.split('\n');
@@ -169,11 +200,18 @@ class C4PlantUMLParser {
     };
   }
 
+  getSpans(): C4SourceSpans {
+    return { elements: this.elementSpans, relationships: this.relationshipSpans };
+  }
+
   /**
    * Parse lines at the current level. If parentId is set, we're inside a boundary.
    * Stops when we hit a closing brace or run out of lines.
+   *
+   * Returns true when it stopped on a closing brace (the block was closed), false
+   * when it ran out of lines.
    */
-  private parseLines(parentId: string | undefined): void {
+  private parseLines(parentId: string | undefined): boolean {
     while (this.lineNum < this.lines.length) {
       const rawLine = this.lines[this.lineNum];
       const line = this.stripComment(rawLine).trim();
@@ -187,7 +225,7 @@ class C4PlantUMLParser {
       // Closing brace — return to parent
       if (line === '}' || line.startsWith('}')) {
         this.lineNum++;
-        return;
+        return true;
       }
 
       // Parse LAYOUT directives
@@ -231,7 +269,7 @@ class C4PlantUMLParser {
 
       // Relationship macro
       if (REL_MACROS.has(macroName)) {
-        this.parseRelMacro(line);
+        this.parseRelMacro(line, parentId);
         this.lineNum++;
         continue;
       }
@@ -244,6 +282,7 @@ class C4PlantUMLParser {
       });
       this.lineNum++;
     }
+    return false;
   }
 
   /**
@@ -253,6 +292,7 @@ class C4PlantUMLParser {
   private parseElementMacro(macroName: string, line: string, parentId: string | undefined): void {
     const info = ELEMENT_MACROS[macroName];
     const currentLine = this.lineNum + 1;
+    const startLine = this.lineNum;
 
     // Extract arguments from parentheses
     const args = this.extractArgs(line, currentLine);
@@ -312,15 +352,20 @@ class C4PlantUMLParser {
     };
 
     this.elements.push(element);
+    const span: ElementSpan = { line: startLine };
+    if (parentId !== undefined) span.parent = parentId;
+    this.elementSpans.push(span);
 
-    // Check if this line ends with { (boundary with children)
-    const hasBrace = line.includes('{') && !line.includes('}');
+    // A boundary opens a block with a '{' (outside quotes) and no '}' on the line.
+    // Leaf elements never open a block, whatever their label contains.
+    const hasBrace = info.boundary && this.opensBlock(line);
 
     if (hasBrace) {
       this.lineNum++;
       // Parse children
       const childrenBefore = this.elements.length;
-      this.parseLines(alias);
+      const closed = this.parseLines(alias);
+      if (closed) span.closeLine = this.lineNum - 1;
       // Link children
       for (let i = childrenBefore; i < this.elements.length; i++) {
         if (this.elements[i].parent === alias) {
@@ -335,7 +380,8 @@ class C4PlantUMLParser {
   /**
    * Parse a relationship macro like Rel(from, to, "label", "tech")
    */
-  private parseRelMacro(line: string): void {
+  private parseRelMacro(line: string, parentId: string | undefined): void {
+    const startLine = this.lineNum;
     const currentLine = this.lineNum + 1;
     const args = this.extractArgs(line, currentLine);
     if (args === null) return;
@@ -361,6 +407,9 @@ class C4PlantUMLParser {
       targetId,
       label: fullLabel,
     });
+    const span: RelationshipSpan = { line: startLine };
+    if (parentId !== undefined) span.parent = parentId;
+    this.relationshipSpans.push(span);
   }
 
   /**
@@ -379,12 +428,21 @@ class C4PlantUMLParser {
       return null;
     }
 
-    // Find matching closing paren (handle nested parens in edge cases)
+    // Find matching closing paren (handle nested parens in edge cases).
+    // Parentheses inside quoted strings are part of the text, not structure.
     let depth = 0;
     let closeIdx = -1;
+    let inQuote = false;
     for (let i = openIdx; i < line.length; i++) {
-      if (line[i] === '(') depth++;
-      else if (line[i] === ')') {
+      const ch = line[i];
+      if (inQuote) {
+        if (ch === '\\') i++;
+        else if (ch === '"') inQuote = false;
+        continue;
+      }
+      if (ch === '"') inQuote = true;
+      else if (ch === '(') depth++;
+      else if (ch === ')') {
         depth--;
         if (depth === 0) {
           closeIdx = i;
@@ -444,6 +502,27 @@ class C4PlantUMLParser {
     if (trimmed) args.push(trimmed);
 
     return args;
+  }
+
+  /**
+   * True when the line has a '{' outside quotes and no '}' outside quotes.
+   */
+  private opensBlock(line: string): boolean {
+    let inQuote = false;
+    let open = false;
+    let close = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuote) {
+        if (ch === '\\') i++;
+        else if (ch === '"') inQuote = false;
+        continue;
+      }
+      if (ch === '"') inQuote = true;
+      else if (ch === '{') open = true;
+      else if (ch === '}') close = true;
+    }
+    return open && !close;
   }
 
   /**

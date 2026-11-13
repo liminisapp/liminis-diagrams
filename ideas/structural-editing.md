@@ -1,6 +1,6 @@
 # Structural editing: adding elements and relationships from the diagram
 
-**Status**: pre-spec sketch. Not a plan, not scoped, do not implement from this file.
+**Status**: pre-spec sketch, superseded. Implemented in #92 — see `specs/92-add-elements-and-relationships-from-the-diagram/` and `adrs/92-structural-editing-edit-api.md`. Kept for the background and the reasoning; do not implement from this file.
 **Raised**: 2026-11-13.
 **Related**: #27 (diagram wiki: identity, link syntax, the document graph); the
 [Limitations](../docs/src/content/docs/index.mdx) section of the docs site, items 1 and 2;

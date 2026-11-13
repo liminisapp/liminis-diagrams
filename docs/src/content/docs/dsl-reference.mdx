@@ -100,6 +100,21 @@ Note the third argument (`"AWS"`, `"K8s"`, `"Nginx"`) lands in `properties.tech`
 `description` — these are all `detail`-style macros, so the third positional argument is
 technology, and a fourth argument would be description.
 
+### Which macros can be added from the diagram
+
+`C4InteractiveRenderer`'s add-element menu (and `applyC4Edit`'s `add-element` edit,
+from the release after 0.1.6) writes `Person`, `System`, `Container`, `Component` and the
+`Db` variants of the last three (`SystemDb`, `ContainerDb`, `ComponentDb`). `_Ext`,
+`Queue`, boundaries and deployment nodes are not offered: write them in the source.
+C4 nesting rules are not enforced — an element can be added in any boundary, which is
+what the parser accepts. A new element is written in the minimal argument form,
+`System(alias, "Label")`, or with a technology and description if given.
+
+**Labels written by an edit** are single-line and safe to read back: `"` is written as
+`'`, `\` as `/`, and control characters as spaces. Commas, parentheses, braces and
+non-ASCII are kept as they are; the parser ignores parentheses and braces inside quoted
+arguments.
+
 ## Relationship macros
 
 `Rel` and its variants all take `(source, target, "label", "technology")` — `technology`

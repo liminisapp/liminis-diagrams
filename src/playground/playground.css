@@ -164,3 +164,10 @@
   line-height: 1;
   padding: 0.2rem 0.5rem;
 }
+
+/* An add/connect that could not be applied to the source (e.g. a boundary with
+   no multi-line block to insert into). Shown in the bar, cleared on the next edit. */
+.c4-playground__edit-error { color: #b91c1c; }
+@media (prefers-color-scheme: dark) {
+  .c4-playground__edit-error { color: #f87171; }
+}

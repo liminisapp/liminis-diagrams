@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { parseC4, validateC4 } from '../core/parser'
+import { applyC4Edit } from '../core/edit'
+import type { C4Edit } from '../core/edit'
 import { C4InteractiveRenderer } from '../react/C4InteractiveRenderer'
 import { C4ErrorDisplay } from '../react/renderer'
+import type { C4EditContext } from '../react/C4InteractiveRenderer'
 import type { ManualLayout } from '../core/types'
 
 /**
@@ -246,6 +249,27 @@ export default function C4Playground({
 
   const positionCount = Object.keys(positions).length
 
+  // Why the last add/connect could not be applied, if it could not.
+  const [editError, setEditError] = useState<string | null>(null)
+
+  // The host's half of structural editing: apply the reported edit to the source
+  // text, and store the reported positions. Both in one handler, so React
+  // batches them and the diagram never renders the new text against the old
+  // positions. The renderer reports; only this component writes anything.
+  const handleEdit = useCallback(
+    (edit: C4Edit, context: C4EditContext) => {
+      const result = applyC4Edit(text, edit)
+      if (!result.ok) {
+        setEditError(result.message)
+        return
+      }
+      setEditError(null)
+      setText(result.source)
+      setPositions(context.positions)
+    },
+    [text],
+  )
+
   const panel = (
     <div
       ref={panelRef}
@@ -285,6 +309,11 @@ export default function C4Playground({
               ? `${positionCount} positions held in memory`
               : 'laid out by dagre'}
         </span>
+        {editError && (
+          <span className="c4-playground__edit-error" role="alert">
+            {editError}
+          </span>
+        )}
         <div className="c4-playground__zoom">
           <button
             type="button"
@@ -336,7 +365,10 @@ export default function C4Playground({
             className="c4-playground__source"
             value={text}
             spellCheck={false}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setEditError(null)
+              setText(e.target.value)
+            }}
             aria-label="C4-PlantUML source"
           />
         )}
@@ -348,6 +380,7 @@ export default function C4Playground({
               isEditMode={editable && isEditMode}
               manualPositions={positions}
               onPositionChange={setPositions}
+              onEdit={editable ? handleEdit : undefined}
               zoom={zoom}
             />
           ) : (

@@ -88,6 +88,29 @@ interface C4Relationship {
 Flat, unordered, no nesting concept — a `Rel` always connects two element IDs regardless
 of how deeply either is nested.
 
+## Source spans: `parseC4WithSpans`
+
+The AST records no source locations, deliberately: `parseC4`'s result shape is stable.
+Editing needs them, so `parseC4WithSpans(code)` returns everything `parseC4` does plus a
+parallel `spans` structure (from the release after 0.1.6):
+
+```ts
+interface C4SourceSpans {
+  elements: ElementSpan[];            // elements[i] describes diagram.elements[i]
+  relationships: RelationshipSpan[];  // relationships[i] describes diagram.relationships[i]
+}
+interface ElementSpan {
+  line: number;        // 0-based line of the macro call
+  closeLine?: number;  // 0-based line of the closing `}`, for a boundary closed on a later line
+  parent?: string;     // enclosing boundary id; undefined at top level
+}
+interface RelationshipSpan { line: number; parent?: string }
+```
+
+`closeLine` is absent for a boundary written without braces, as a single-line `{ }`, or
+never closed — exactly the shapes that cannot take a new child by pure insertion.
+`applyC4Edit` uses these spans; you rarely need them yourself.
+
 ## `LayoutResult`
 
 ```ts

@@ -1,9 +1,9 @@
 ---
 title: "Recipes"
-description: "Runnable examples: headless SVG, embedding the renderer, persisting positions."
+description: "Runnable examples: headless SVG, embedding the renderer, persisting positions, adding elements and relationships."
 ---
 
-Three complete, runnable integrations. Each was executed against this package's current
+Four complete, runnable integrations. Each was executed against this package's current
 `src/` and the output shown is what it actually produced — see the individual notes for
 how.
 
@@ -160,3 +160,168 @@ markdown editor, this is not the right storage format for you — pick whatever 
 host (a database column, a separate JSON file next to the source, a CRDT document,
 whatever). The only contract this package cares about is the shape:
 `Record<string, { x: number; y: number }>`.
+
+## Recipe 4: adding elements and relationships — the host's responsibilities
+
+> Available from the release after 0.1.6. The docs-site playground and the demo are
+> pinned to the published package, so they do not show this yet.
+
+The renderer can add things; **it never changes your source and never writes anywhere**.
+It *reports* an edit, you apply it. This is the same controlled pattern as
+`onPositionChange`, and it means undo, persistence and conflict handling are whatever
+your host already has.
+
+In edit mode, **and only when you pass `onEdit`**, `C4InteractiveRenderer` offers two
+things. (A host that passes `isEditMode` for dragging alone sees no change at all.)
+
+- **Add an element.** Right-click empty canvas — or inside a boundary to add it there — to
+  open a menu of kinds (Person, System, Container, Component, and the `Db` variant of
+  System, Container and Component). On touch, which has no right-click, **press and hold
+  for about half a second** without moving: the same menu opens. Moving the finger
+  further than a few pixels cancels the press, so a drag never opens a menu. Choosing a
+  kind places the element at the point you opened the menu, then a label input appears
+  over it. Enter confirms (an empty label falls back to a placeholder); Escape or losing
+  focus cancels and reports nothing. The menu itself closes on Escape, a click outside it,
+  or `pointercancel` of the pointer that opened it, and reports nothing. While editing is
+  on the browser's own context menu is suppressed over the diagram; a read-only render,
+  and a host that passes `isEditMode` without `onEdit`, keep it.
+- **Add a relationship.** Drag from the dot on an element's right edge to another
+  element. On release a label input appears near the midpoint of the new edge, pre-filled
+  with "Uses": Enter confirms (empty falls back to "Uses"), Escape or losing focus cancels
+  and reports nothing, and the source is untouched until then. Releasing on empty canvas,
+  on a boundary, or on the same element shows no input and reports nothing. Boundaries
+  cannot start or end a relationship in this first cut. This labels the *new* `Rel` only;
+  renaming an existing element or relationship is not offered.
+
+The menu opens over empty canvas or a boundary, not over an element, a connect handle or
+the legend (the native menu is still suppressed there).
+
+Dragging a node still moves it; the connect handle is a separate target, and the two
+gestures are mutually exclusive. All of it uses pointer events and handles
+`pointercancel`. The handle sits on each node's right edge with a touch target of about
+16 SVG units, so the strip of a node just inside its right edge starts a connection
+rather than a move; grab the node anywhere else to move it.
+
+### The host's half
+
+`onEdit(edit, { positions })` gives you two things, and you must do both **in the same
+update**:
+
+1. **Apply `edit` to your source text** with `applyC4Edit` from `./core`. It is headless —
+   no React — so the same call works from a test, a CLI or an agent.
+2. **Store `positions`**, replacing your own map. It is already the merge you want:
+   your current manual positions (untouched), plus the current position of every node that
+   had none, plus the new element at the spot the user placed it. Pinning every visible
+   node is what stops the automatic layout reshuffling when a node is added.
+   **Merge, don't clear.** A host that resets its layout whenever the set of element ids
+   changes (as `@liminis/editor`'s `C4Component.tsx` does today) throws away every
+   arranged position the moment one box is added; that behaviour has to become a merge
+   before this feature is usable there.
+
+Apply both together. If the new text lands a frame before the new positions, the diagram
+renders the new element at the bottom of the stacked column and then jumps. In a plain
+`useState` host this is free (React batches two setters in one handler); in a host that
+updates asynchronously, make sure the two arrive in one update.
+
+```tsx
+import { useState } from 'react';
+import { parseC4, validateC4, applyC4Edit } from '@liminis/diagrams/core';
+import { C4InteractiveRenderer } from '@liminis/diagrams/react';
+import type { C4Edit } from '@liminis/diagrams/core';
+import type { C4EditContext } from '@liminis/diagrams/react';
+
+function EditableDiagram({ initial }: { initial: string }) {
+  const [text, setText] = useState(initial);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  const parsed = parseC4(text);
+  const errors = parsed.diagram ? validateC4(parsed.diagram) : parsed.errors;
+  // Nothing to click while the text does not parse, so editing is unavailable.
+  if (!parsed.diagram || errors.length > 0) return <pre>{text}</pre>;
+
+  const onEdit = (edit: C4Edit, context: C4EditContext) => {
+    const result = applyC4Edit(text, edit);
+    if (!result.ok) {
+      setError(result.message); // e.g. a boundary that cannot take a new line
+      return;
+    }
+    setError(null);
+    setText(result.source);          // 1. the new source text...
+    setPositions(context.positions); // 2. ...and the merged positions, in the same update
+  };
+
+  return (
+    <>
+      {error && <p role="alert">{error}</p>}
+      <C4InteractiveRenderer
+        diagram={parsed.diagram}
+        isDarkMode={false}
+        isEditMode
+        manualPositions={positions}
+        onPositionChange={setPositions}
+        onEdit={onEdit}
+      />
+    </>
+  );
+}
+```
+
+This is `C4Playground`'s own wiring, and the playground's end-to-end test
+(`src/playground/C4Playground.test.tsx`) drives exactly this: add a top-level element,
+add an element inside a boundary, connect two elements, diffing the source each time.
+
+**Verified** by that test: each action inserts exactly one line and no other line
+changes; previously positioned elements keep their positions; the first edit on a diagram
+with no manual positions moves no element.
+
+### `applyC4Edit`, headless
+
+```ts
+import { applyC4Edit } from '@liminis/diagrams/core';
+
+const source = `@startuml
+Person(user, "User")
+System(app, "App")
+Rel_D(user, app, "Uses", "HTTPS")
+@enduml`;
+
+const r = applyC4Edit(source, { kind: 'add-element', elementKind: 'system', label: 'Billing' });
+// r = { ok: true, source: <...>, insertedLine: 'System(billing, "Billing")', label: 'Billing', alias: 'billing' }
+```
+
+The result source is the input with one line inserted after the last top-level element or
+boundary (wherever that sits relative to any `Rel` lines, and always before `@enduml`). An element with `parent` set to a
+boundary id goes inside that boundary's `{ ... }` block, indented like its siblings. A
+`add-relationship` edit inserts one `Rel(source, target, "label")` line after the last
+top-level `Rel`.
+
+Failures are returned, not thrown: `{ ok: false, code, message }`, where `code` is one of
+`parse-error`, `unknown-parent`, `unknown-endpoint`, `boundary-cannot-take-children`
+(a boundary with no braces, a single-line `{ }`, or an unterminated block: adding a child
+would mean rewriting an existing line), `alias-collision`, `invalid-alias`,
+`self-relationship`, `invalid-result`.
+
+Four guarantees worth relying on:
+
+- **The source stays canonical.** An edit is a line insertion at a character offset. No
+  existing byte changes: comments, `Rel` technology arguments, `Rel_D`-style variants,
+  `!include`, `title`, `SHOW_LEGEND()` and `LAYOUT_*` all survive, and CRLF files get CRLF.
+  The parsed model is lossy and is never re-serialised.
+- **The result parses.** Every returned source is re-parsed before it is returned.
+- **Aliases are unique and valid.** Without `alias` one is generated from the label
+  (`Cache` → `cache`, then `cache_2`, …), avoiding every existing id, macro names and the
+  reserved `__legend__`. The renderer decides the alias itself because positions are keyed
+  by it; if you pass one and it collides with your current text, you get
+  `alias-collision` rather than a silent rename (which would orphan the position).
+- **Labels are made safe, not rejected.** The parser does not un-escape and PlantUML has
+  no escape for `"`, so inside a quoted argument `"` becomes `'`, `\` becomes `/`, and
+  control characters become spaces. The result reports the label as written.
+
+### Styling the menu
+
+The add-element menu is the package's only built-in control. It uses inline styles and
+reads `--c4-accent`, `--c4-border` and `--c4-bg`, and it carries `data-c4-menu` for
+targeting (each item has `data-kind`). It replaces the toolbar palette (`data-c4-palette`)
+of earlier drafts, which no longer exists. The inline label inputs — for an element and
+for a relationship — carry `data-c4-label-input`.

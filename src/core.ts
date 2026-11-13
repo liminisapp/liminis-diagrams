@@ -11,7 +11,26 @@
  * `@liminis/diagrams/server`. See docs/EXTRACTION-PLAN.md §2.
  */
 
-export { parseC4, validateC4 } from './core/parser';
+export { parseC4, parseC4WithSpans, validateC4 } from './core/parser';
+export { applyC4Edit, sanitizeC4Text } from './core/edit';
+export type {
+  C4Edit,
+  C4AddElementEdit,
+  C4AddRelationshipEdit,
+  C4EditErrorCode,
+  ApplyC4EditResult,
+} from './core/edit';
+export {
+  generateC4Alias,
+  isValidC4Alias,
+  isC4AliasAvailable,
+  C4_ADDABLE_ELEMENT_KINDS,
+  C4_ELEMENT_KIND_MACRO,
+  C4_DEFAULT_LABELS,
+  C4_DEFAULT_RELATIONSHIP_LABEL,
+  C4_RESERVED_LEGEND_ID,
+} from './core/alias';
+export type { C4AddableElementKind } from './core/alias';
 export { layoutC4Diagram } from './core/layout';
 export { buildClippedEdgePaths, estimateLabelSize } from './core/edge-clipping';
 export {
@@ -39,4 +58,8 @@ export type {
   ParseError,
   ParseResult,
   ManualLayout,
+  ElementSpan,
+  RelationshipSpan,
+  C4SourceSpans,
+  ParseResultWithSpans,
 } from './core/types';

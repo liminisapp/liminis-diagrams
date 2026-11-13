@@ -33,7 +33,8 @@ point to pick.
 ## Not sure this package does what you're assuming?
 
 Read [Limitations](https://docs.liminis.app/liminis-diagrams/#limitations--read-this-first) before you build
-against this package. In short: no editing UI, no persistence, element IDs aren't
+against this package. In short: editing is limited to adding elements and relationships
+(reported to your host, never written by this package), no persistence, element IDs aren't
 stable across diagrams, no cross-diagram links.
 
 ## Parse and lay out
@@ -84,6 +85,34 @@ import { C4InteractiveRenderer } from '@liminis/diagrams/react';
   onPositionChange={setPositions}
 />
 ```
+
+### Add elements and relationships
+
+Pass `onEdit` as well (and keep `isEditMode` on) and the renderer offers a right-click (long-press on touch) menu to add
+an element and a handle on each element to drag a relationship to another one. It
+**reports** each as an edit; it never changes your source. `applyC4Edit` turns the edit
+into new source text — exactly one inserted line, nothing else touched — and you store it:
+
+```tsx
+import { applyC4Edit } from '@liminis/diagrams/core';
+
+<C4InteractiveRenderer
+  diagram={diagram}
+  isDarkMode={false}
+  isEditMode={true}
+  manualPositions={positions}
+  onPositionChange={setPositions}
+  onEdit={(edit, { positions }) => {
+    const result = applyC4Edit(text, edit);
+    if (!result.ok) return showError(result.message);
+    setText(result.source);   // apply both together, in one batch
+    setPositions(positions);  // merge, never clear: this map already includes yours
+  }}
+/>
+```
+
+See [Recipe 4](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities)
+for the host's responsibilities. Available from the release after 0.1.6.
 
 Pass `manualPositions` to `layoutC4Diagram` to bypass dagre for the elements you have
 positions for. Persisting them is entirely your call — see
