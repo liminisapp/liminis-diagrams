@@ -53,6 +53,9 @@ export const C4_DEFAULT_LABELS: Record<C4AddableElementKind, string> = {
   componentDb: 'Database',
 };
 
+/** Label given to a relationship created by dragging from one element to another. */
+export const C4_DEFAULT_RELATIONSHIP_LABEL = 'Uses';
+
 const ALIAS_FALLBACK: Record<C4AddableElementKind, string> = {
   person: 'person',
   system: 'system',

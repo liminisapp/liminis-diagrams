@@ -14,11 +14,51 @@ import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { C4RendererContent, computeLegendInfo, normaliseZoom } from './renderer';
 import { layoutC4Diagram } from '../core/layout';
-import type { LayoutResult, LayoutNode, C4Diagram, C4Element } from '../core/types';
+import type { LayoutResult, LayoutNode, C4Diagram, C4Element, Point } from '../core/types';
+import { isBoundary } from '../core/types';
+import {
+  C4_DEFAULT_LABELS,
+  C4_DEFAULT_RELATIONSHIP_LABEL,
+  generateC4Alias,
+  type C4AddableElementKind,
+} from '../core/alias';
+import { sanitizeC4Text, type C4Edit } from '../core/edit';
 import { useC4DiagramDrag } from './hooks/useC4DiagramDrag';
+import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
+import { findBoundaryAt, findElementAt } from './hit-test';
+import { EditPalette } from './EditPalette';
+import { LabelInput } from './LabelInput';
 
 /** Synthetic ID used to store legend position in manual positions map */
 export const LEGEND_POSITION_ID = '__legend__';
+
+/** Context the renderer reports alongside a structural edit. */
+export interface C4EditContext {
+  /**
+   * The complete positions map the host should store, replacing its own.
+   *
+   * It is the host's current manual positions (untouched, so nothing that was
+   * placed moves), plus the current position of every node that had none (so
+   * adding a node cannot reshuffle the automatic layout), plus — for an added
+   * element — the position the user placed it at, keyed by the new alias.
+   */
+  positions: Record<string, { x: number; y: number }>;
+}
+
+/** Default size of a freshly placed node, matching what layout gives new nodes. */
+function defaultNodeSize(kind: C4AddableElementKind): { width: number; height: number } {
+  return kind === 'person' ? { width: 120, height: 120 } : { width: 240, height: 80 };
+}
+
+/** An element that has been placed and is waiting for its label. */
+interface PendingAdd {
+  kind: C4AddableElementKind;
+  parent?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface C4InteractiveRendererProps {
   /** Parsed C4 diagram */
@@ -31,6 +71,17 @@ export interface C4InteractiveRendererProps {
   manualPositions: Record<string, { x: number; y: number }>;
   /** Callback when positions change (during drag or on drag end) */
   onPositionChange: (positions: Record<string, { x: number; y: number }>) => void;
+  /**
+   * Called when the user adds an element or connects two elements. Providing it
+   * (together with `isEditMode`) is what turns the add and connect affordances on;
+   * without it the renderer behaves exactly as before.
+   *
+   * The renderer never applies the edit and never writes anywhere. The host
+   * applies `edit` to its source text (see `applyC4Edit` in `./core`) and stores
+   * `context.positions` — in the same update, so the diagram never renders the
+   * new text against the old positions.
+   */
+  onEdit?: (edit: C4Edit, context: C4EditContext) => void;
   /**
    * Scale factor for the rendered diagram. 1 is actual size; 2 draws it twice as
    * large. Defaults to 1, so a host that does not care is unaffected.
@@ -114,9 +165,18 @@ export function C4InteractiveRenderer({
   isEditMode,
   manualPositions,
   onPositionChange,
+  onEdit,
   zoom = 1,
 }: C4InteractiveRendererProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Structural editing is on only with edit mode AND a callback to report to: a
+  // host that passes isEditMode for dragging alone must not grow dead buttons.
+  const canEdit = isEditMode && onEdit !== undefined;
+  // Kind armed in the palette, waiting for a click on the canvas.
+  const [placementKind, setPlacementKind] = useState<C4AddableElementKind | null>(null);
+  // Placed element waiting for its label; nothing reaches the host until confirmed.
+  const [pending, setPending] = useState<PendingAdd | null>(null);
 
   // Local positions during drag (merged with persisted positions)
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
@@ -288,6 +348,117 @@ export function C4InteractiveRenderer({
     enabled: isEditMode,
   });
 
+  /**
+   * Every node's position: the current layout for nodes without a manual
+   * position, the host's own value for those with one (so those never move, and
+   * never pick up rounding), then any extras. Read from the effective `layout`,
+   * not `autoLayout`, so a partial host map or a "Reset layout" pins correctly.
+   * Stateless on purpose: there is no "first edit" flag to get out of sync.
+   */
+  const buildPositions = (extra?: Record<string, { x: number; y: number }>) => ({
+    ...collectNodePositions(layout.nodes),
+    ...effectivePositions,
+    ...extra,
+  });
+
+  // Mirrors for guards that run inside event handlers.
+  const draggedNodeIdRef = useRef<string | null>(null);
+  draggedNodeIdRef.current = draggedNodeId;
+  const busyRef = useRef(false);
+  busyRef.current = placementKind !== null || pending !== null;
+
+  const { connectSourceId, connectPointer, startConnect } = useC4ConnectDrag({
+    svgRef,
+    enabled: canEdit,
+    // Move, connect, placement and the label input are mutually exclusive.
+    canStart: () => draggedNodeIdRef.current === null && !busyRef.current,
+    onConnect: (sourceId, point) => {
+      const target = findElementAt(layout.nodes, point);
+      // Empty canvas, a boundary (no boundary relationships in this cut) or the
+      // source itself (cannot be drawn as an edge): nothing to report.
+      if (!target || target.id === sourceId) return;
+      onEdit?.(
+        {
+          kind: 'add-relationship',
+          sourceId,
+          targetId: target.id,
+          label: C4_DEFAULT_RELATIONSHIP_LABEL,
+        },
+        { positions: buildPositions() },
+      );
+    },
+  });
+
+  const guardedStartNodeDrag = useCallback(
+    (nodeId: string, nodeX: number, nodeY: number, e: React.PointerEvent | React.MouseEvent) => {
+      if (connectSourceId !== null) return;
+      startNodeDrag(nodeId, nodeX, nodeY, e);
+    },
+    [connectSourceId, startNodeDrag],
+  );
+
+  // Edit mode (or the callback) going away drops any half-finished add.
+  useEffect(() => {
+    if (!canEdit) {
+      setPlacementKind(null);
+      setPending(null);
+    }
+  }, [canEdit]);
+
+  // Escape disarms a kind waiting for placement.
+  useEffect(() => {
+    if (placementKind === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPlacementKind(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [placementKind]);
+
+  // The browser taking a touch away (pointercancel) abandons an add in progress.
+  useEffect(() => {
+    if (placementKind === null && pending === null) return;
+    const onCancel = () => {
+      setPlacementKind(null);
+      setPending(null);
+    };
+    window.addEventListener('pointercancel', onCancel);
+    return () => window.removeEventListener('pointercancel', onCancel);
+  }, [placementKind, pending]);
+
+  const handlePlace = useCallback(
+    (point: Point) => {
+      if (placementKind === null) return;
+      const size = defaultNodeSize(placementKind);
+      const parent = findBoundaryAt(layout.nodes, point)?.id;
+      const next: PendingAdd = {
+        kind: placementKind,
+        x: Math.round(point.x - size.width / 2),
+        y: Math.round(point.y - size.height / 2),
+        ...size,
+      };
+      if (parent !== undefined) next.parent = parent;
+      setPlacementKind(null);
+      setPending(next);
+    },
+    [placementKind, layout.nodes],
+  );
+
+  const handleConfirmLabel = (value: string) => {
+    if (!pending) return;
+    const label = sanitizeC4Text(value) || C4_DEFAULT_LABELS[pending.kind];
+    const alias = generateC4Alias(
+      label,
+      diagram.elements.map((e) => e.id),
+      pending.kind,
+    );
+    const edit: C4Edit = { kind: 'add-element', elementKind: pending.kind, label, alias };
+    if (pending.parent !== undefined) edit.parent = pending.parent;
+    const positions = buildPositions({ [alias]: { x: pending.x, y: pending.y } });
+    setPending(null);
+    onEdit?.(edit, { positions });
+  };
+
   // Clear drag positions once manualPositions has absorbed the persisted values.
   // We verify absorption by comparing values — this avoids both:
   // - Clearing mid-drag (draggedNodeId guard)
@@ -330,10 +501,25 @@ export function C4InteractiveRenderer({
       isEditMode={isEditMode}
       draggedNodeId={draggedNodeId}
       svgRef={svgRef}
-      onNodeMouseDown={startNodeDrag}
+      onNodeMouseDown={guardedStartNodeDrag}
       legendInfo={legendInfo}
       legendPositionOverride={legendPositionOverride}
       zoom={zoom}
+      editing={
+        canEdit
+          ? {
+              placementKind,
+              pending,
+              connectSourceId,
+              connectPointer,
+              onSelectKind: setPlacementKind,
+              onPlace: handlePlace,
+              onStartConnect: startConnect,
+              onConfirmLabel: handleConfirmLabel,
+              onCancelLabel: () => setPending(null),
+            }
+          : null
+      }
     />
   );
 }
@@ -354,7 +540,24 @@ interface C4InteractiveSvgProps {
   legendPositionOverride: { x: number; y: number } | null;
   /** Scale factor applied to the rendered size; the viewBox is unchanged. */
   zoom: number;
+  /** Structural-editing state and handlers; null when editing is not enabled. */
+  editing: EditingProps | null;
 }
+
+interface EditingProps {
+  placementKind: C4AddableElementKind | null;
+  pending: PendingAdd | null;
+  connectSourceId: string | null;
+  connectPointer: Point | null;
+  onSelectKind: (kind: C4AddableElementKind | null) => void;
+  onPlace: (point: Point) => void;
+  onStartConnect: (sourceId: string, e: React.PointerEvent) => void;
+  onConfirmLabel: (value: string) => void;
+  onCancelLabel: () => void;
+}
+
+/** Radius of the (invisible) touch target of a connect handle, in SVG units. */
+const CONNECT_HANDLE_HIT_RADIUS = 16;
 
 /**
  * SVG wrapper that adds interactive overlays for drag handling.
@@ -369,6 +572,7 @@ function C4InteractiveSvg({
   legendInfo,
   legendPositionOverride,
   zoom,
+  editing,
 }: C4InteractiveSvgProps): JSX.Element {
   // Guarded here as well as in C4Renderer: both are public entry points, and a
   // host reaching this one never passes through the other.
@@ -432,9 +636,49 @@ function C4InteractiveSvg({
     return { svgWidth: w, svgHeight: h };
   }, [layout.width, layout.height, layout.viewBoxX, layout.viewBoxY, legendInfo, legendPositionOverride]);
 
-  return (
-    <div style={{ position: 'relative' }}>
-      {/* Base renderer - use full rendered size including legend */}
+  // Placement: the pointer that went down on the placement layer owns the tap.
+  const placementPointerRef = useRef<number | null>(null);
+  const placing = editing !== null && editing.placementKind !== null;
+  useEffect(() => {
+    if (!placing) {
+      placementPointerRef.current = null;
+      return;
+    }
+    // Runs after React's own handlers (root before window), so a tap has already
+    // been placed by the time the owner is cleared here.
+    const clear = (e: PointerEvent) => {
+      if (e.pointerId === placementPointerRef.current) placementPointerRef.current = null;
+    };
+    window.addEventListener('pointerup', clear);
+    window.addEventListener('pointercancel', clear);
+    return () => {
+      window.removeEventListener('pointerup', clear);
+      window.removeEventListener('pointercancel', clear);
+    };
+  }, [placing]);
+
+  const clientToSvg = (clientX: number, clientY: number): Point | null => {
+    const svg = svgRef.current;
+    const ctm = svg?.getScreenCTM();
+    if (!svg || !ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  };
+
+  const connectSource = editing?.connectSourceId
+    ? layout.nodes.find((n) => n.id === editing.connectSourceId)
+    : undefined;
+  const connectTarget =
+    connectSource && editing?.connectPointer
+      ? findElementAt(layout.nodes, editing.connectPointer)
+      : null;
+  const accent = 'var(--c4-accent, #3b82f6)';
+  const gesturesIdle = editing !== null && editing.placementKind === null && editing.pending === null;
+
+  const svgElement = (
       <svg
         ref={svgRef}
         width={svgWidth * scale}
@@ -493,7 +737,145 @@ function C4InteractiveSvg({
             ))}
           </g>
         )}
+
+        {/* Connect handles: a separate target above the move rects, always
+            visible because touch has no hover. Boundaries get none. */}
+        {gesturesIdle && (
+          <g className="connect-handles-layer">
+            {layout.nodes
+              .filter((n) => !isBoundary(n.element))
+              .map((n) => {
+                const cx = n.x + n.width;
+                const cy = n.y + n.height / 2;
+                return (
+                  <g key={`connect-${n.id}`}>
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={5}
+                      fill={accent}
+                      stroke={isDarkMode ? '#18181b' : '#ffffff'}
+                      strokeWidth={1.5}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                    <circle
+                      data-connect-handle={n.id}
+                      cx={cx}
+                      cy={cy}
+                      r={CONNECT_HANDLE_HIT_RADIUS}
+                      fill="transparent"
+                      style={{ cursor: 'crosshair', touchAction: 'none' }}
+                      onPointerDown={(e) => editing.onStartConnect(n.id, e)}
+                    />
+                  </g>
+                );
+              })}
+          </g>
+        )}
+
+        {/* Connect feedback: rubber band and target highlight */}
+        {connectSource && editing?.connectPointer && (
+          <g className="connect-feedback-layer" style={{ pointerEvents: 'none' }}>
+            {connectTarget && connectTarget.id !== connectSource.id && (
+              <rect
+                x={connectTarget.x}
+                y={connectTarget.y}
+                width={connectTarget.width}
+                height={connectTarget.height}
+                fill="none"
+                stroke={accent}
+                strokeWidth={3}
+                rx={4}
+              />
+            )}
+            <line
+              data-connect-line=""
+              x1={connectSource.x + connectSource.width}
+              y1={connectSource.y + connectSource.height / 2}
+              x2={editing.connectPointer.x}
+              y2={editing.connectPointer.y}
+              stroke={accent}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+            />
+          </g>
+        )}
+
+        {/* Ghost of an element waiting for its label; not in the source yet */}
+        {editing?.pending && (
+          <rect
+            data-pending-element=""
+            x={editing.pending.x}
+            y={editing.pending.y}
+            width={editing.pending.width}
+            height={editing.pending.height}
+            fill={isDarkMode ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)'}
+            stroke={accent}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            rx={6}
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
+
+        {/* Placement layer: above everything while a kind is armed. The tap
+            places on pointerup of the same pointer; pointercancel abandons it. */}
+        {editing?.placementKind && (
+          <rect
+            data-placement-layer=""
+            x={layout.viewBoxX}
+            y={layout.viewBoxY}
+            width={svgWidth}
+            height={svgHeight}
+            fill="transparent"
+            style={{ cursor: 'crosshair', touchAction: 'none' }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              if (placementPointerRef.current === null) placementPointerRef.current = e.pointerId;
+            }}
+            onPointerUp={(e) => {
+              if (e.pointerId !== placementPointerRef.current) return;
+              placementPointerRef.current = null;
+              const p = clientToSvg(e.clientX, e.clientY);
+              if (p) editing.onPlace(p);
+            }}
+            onPointerCancel={() => {
+              placementPointerRef.current = null;
+            }}
+          />
+        )}
       </svg>
+  );
+
+  if (!editing) {
+    return <div style={{ position: 'relative' }}>{svgElement}</div>;
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <EditPalette
+        activeKind={editing.placementKind}
+        disabled={editing.pending !== null}
+        isDarkMode={isDarkMode}
+        onSelect={editing.onSelectKind}
+      />
+      {/* Own positioning context, so the label input is offset from the SVG's
+          origin and not from the palette above it. */}
+      <div style={{ position: 'relative' }}>
+        {svgElement}
+        {editing.pending && (
+          <LabelInput
+            left={(editing.pending.x - layout.viewBoxX) * scale}
+            top={(editing.pending.y - layout.viewBoxY) * scale}
+            width={editing.pending.width * scale}
+            height={editing.pending.height * scale}
+            initialValue={C4_DEFAULT_LABELS[editing.pending.kind]}
+            isDarkMode={isDarkMode}
+            onConfirm={editing.onConfirmLabel}
+            onCancel={editing.onCancelLabel}
+          />
+        )}
+      </div>
     </div>
   );
 }
