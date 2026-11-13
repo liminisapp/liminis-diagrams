@@ -40,7 +40,7 @@ Rel(user, app, "Uses")
 @enduml`;
 
 describe('applyC4Edit: add-element, top level', () => {
-  it('inserts one line after the last top-level element, before the first Rel', () => {
+  it('inserts one line after the last top-level element, ahead of the Rel that follows it', () => {
     const r = apply(BASIC, addPerson());
     expect(r.insertedLine).toBe('Person(admin, "Admin")');
     expect(r.alias).toBe('admin');

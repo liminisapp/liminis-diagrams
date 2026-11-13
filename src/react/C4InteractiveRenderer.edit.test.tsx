@@ -325,6 +325,31 @@ describe('long-press', () => {
     expect(onEdit.mock.calls[0][0]).toMatchObject({ parent: 'b' });
   });
 
+  it('on a boundary, takes over from the move-drag: releasing writes no positions', () => {
+    const { container, onPositionChange, onEdit } = setup();
+    const b = rectOf(container, 'b');
+    const p = { x: b.x + 5, y: b.y + 5 };
+    longPress(container, p, 1, q(container, '[data-node-id="b"]')!);
+    expect(menuOf(container)).not.toBeNull();
+    // Finger lifts (and a stray cancel from the same pointer is harmless to the host).
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: p.x, clientY: p.y });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(onPositionChange).not.toHaveBeenCalled();
+    expect(onEdit).not.toHaveBeenCalled();
+    // Move still works afterwards: no stuck drag state.
+    fireEvent.keyDown(window, { key: 'Escape' });
+    const rect = q(container, '[data-node-id="b"]')!;
+    fireEvent.pointerDown(rect, { pointerId: 2, clientX: p.x, clientY: p.y });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: p.x + 30, clientY: p.y + 30 });
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    fireEvent.pointerUp(window, { pointerId: 2, clientX: p.x + 30, clientY: p.y + 30 });
+    expect(onPositionChange).toHaveBeenCalledTimes(1);
+  });
+
   it('is cancelled by movement past the threshold, so a drag never opens a menu', () => {
     const { container } = setup();
     pressDown(container, { x: 900, y: 900 });

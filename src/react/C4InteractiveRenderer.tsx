@@ -364,7 +364,7 @@ export function C4InteractiveRenderer({
   }, [manualPositions, autoLayout.nodes, onPositionChange, applyDragWithChildren]);
 
   // Set up drag hook (window-level listeners handle mousemove/mouseup)
-  const { draggedNodeId, startNodeDrag } = useC4DiagramDrag({
+  const { draggedNodeId, startNodeDrag, cancelDrag } = useC4DiagramDrag({
     svgRef,
     onNodeDrag: handleNodeDrag,
     onNodeDragEnd: handleNodeDragEnd,
@@ -471,13 +471,33 @@ export function C4InteractiveRenderer({
     [layout.nodes],
   );
 
+  const abortMoveDrag = () => {
+    if (draggedNodeIdRef.current === null) return;
+    cancelDrag();
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    pendingDragRef.current = null;
+    dragPositionsRef.current = {};
+    setDragPositions({});
+    dragStartPosRef.current = null;
+    dragStartPositionsRef.current = {};
+  };
+
   const { onPointerDownCapture: onLongPressPointerDown } = useC4LongPress({
     enabled: canEdit,
     shouldStart: (e) =>
       draggedNodeIdRef.current === null &&
       !busyRef.current &&
       isMenuTarget(e.target, e.clientX, e.clientY),
-    onLongPress: ({ clientX, clientY, pointerId }) => openMenuAt(clientX, clientY, pointerId),
+    onLongPress: ({ clientX, clientY, pointerId }) => {
+      // A press on a boundary also started a move-drag on its hit rect. The menu
+      // takes the pointer over: drop that drag and its preview without reporting
+      // it, so releasing the finger writes no positions to the host.
+      abortMoveDrag();
+      openMenuAt(clientX, clientY, pointerId);
+    },
   });
 
   const handleContextMenu = (e: React.MouseEvent) => {

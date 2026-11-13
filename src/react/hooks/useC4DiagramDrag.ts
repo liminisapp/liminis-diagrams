@@ -47,6 +47,12 @@ export interface UseC4DiagramDragReturn {
   ) => void;
   /** Convert screen coordinates to SVG coordinates */
   screenToSvg: (clientX: number, clientY: number) => { x: number; y: number } | null;
+  /**
+   * Abandon the drag in flight without reporting it: `onNodeDragEnd` is not
+   * called. For when another gesture (a long-press opening the add menu) takes
+   * over the pointer. A no-op when nothing is being dragged.
+   */
+  cancelDrag: () => void;
 }
 
 /**
@@ -153,6 +159,14 @@ export function useC4DiagramDrag({
     [enabled, screenToSvg, svgRef]
   );
 
+  const cancelDrag = useCallback(() => {
+    if (draggedNodeIdRef.current === null) return;
+    draggedNodeIdRef.current = null;
+    activePointerIdRef.current = null;
+    lockedCtmInverseRef.current = null;
+    setDraggedNodeId(null);
+  }, []);
+
   // Attach window-level listeners while dragging
   useEffect(() => {
     if (!draggedNodeId) return;
@@ -209,5 +223,6 @@ export function useC4DiagramDrag({
     isDragging: draggedNodeId !== null,
     startNodeDrag,
     screenToSvg,
+    cancelDrag,
   };
 }
