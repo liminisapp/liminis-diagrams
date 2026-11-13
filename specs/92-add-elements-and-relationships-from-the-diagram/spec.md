@@ -104,7 +104,7 @@ In edit mode, I choose an element kind, place it on the canvas (at the top level
 
 **Acceptance Scenarios**:
 
-1. **Given** a parseable diagram in edit mode, **When** I add an element at the top level, **Then** exactly one macro line is inserted (after the last top-level element and before the first top-level `Rel`, or before `@enduml` as a fallback), no other line changes, and the element appears where I placed it.
+1. **Given** a parseable diagram in edit mode, **When** I add an element at the top level, **Then** exactly one macro line is inserted (after the last top-level element or boundary, or before `@enduml` as a fallback), no other line changes, and the element appears where I placed it.
 2. **Given** a diagram with a boundary, **When** I add an element inside that boundary, **Then** exactly one macro line is inserted inside that boundary's block, indented like its siblings.
 3. **Given** elements with manual positions, **When** I add a new element, **Then** those elements keep their positions.
 4. **Given** an existing element whose alias equals the slug of the new label, **When** I add the element, **Then** the generated alias is unique and a valid identifier.
@@ -170,7 +170,7 @@ A tool builder or agent applies the same add-element / add-relationship edits to
 - **FR-002**: The edit description MUST be a discriminated union with at least an add-element edit and an add-relationship edit, shaped so that further edit kinds (delete, rename, re-parent, edit relationship) can be added later without breaking existing callers.
 - **FR-003**: An edit MUST be a minimal line-level insertion into the original text; no existing line may be modified, and the model MUST NOT be re-serialised.
 - **FR-004**: Comments, `Rel` technology arguments, direction-variant macros and stripped directives (`!include`, `SHOW_LEGEND()`, `title`, `LAYOUT_*`, etc.) MUST remain byte-identical after any edit.
-- **FR-005**: Adding a top-level element MUST insert exactly one macro line, placed after the last top-level element or boundary and before the first top-level `Rel`; when there is no top-level element, it falls back to immediately before `@enduml` (or the end of the source if there is none). It MUST never land after `@enduml`.
+- **FR-005**: Adding a top-level element MUST insert exactly one macro line, placed after the last top-level element or boundary, wherever that sits relative to any `Rel`; when there is no top-level element, it falls back to immediately before `@enduml` (or the end of the source if there is none). It MUST never land after `@enduml`.
 - **FR-006**: Adding an element inside a boundary MUST insert exactly one macro line inside that boundary's block, indented to match its siblings.
 - **FR-007**: Adding a relationship MUST insert exactly one `Rel(...)` line connecting the chosen source and target elements.
 - **FR-008**: Generated aliases MUST be unique within the diagram and be valid C4-PlantUML identifiers, including when the label collides with an existing alias.
