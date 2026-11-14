@@ -249,7 +249,7 @@ export default function C4Playground({
 
   const positionCount = Object.keys(positions).length
 
-  // Why the last add/connect could not be applied, if it could not.
+  // Why the last add/connect/rename could not be applied, if it could not.
   const [editError, setEditError] = useState<string | null>(null)
 
   // The host's half of structural editing: apply the reported edit to the source
@@ -308,6 +308,7 @@ export default function C4Playground({
             : positionCount > 0
               ? `${positionCount} positions held in memory`
               : 'laid out by dagre'}
+          {editable && isEditMode ? ' · double-click a label to rename' : ''}
         </span>
         {editError && (
           <span className="c4-playground__edit-error" role="alert">
