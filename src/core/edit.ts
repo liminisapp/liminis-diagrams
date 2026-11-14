@@ -4,8 +4,10 @@
  * `applyC4Edit(source, edit)` returns new source text. An edit is always a
  * minimal patch of the original text: adding is an *insertion* at a single point
  * (one line for elements and relationships, one contiguous block for an empty
- * boundary: opening line plus closing `}`) that changes no existing byte, and
- * renaming splices the characters of exactly one label argument. The parsed
+ * boundary: opening line plus closing `}`) that changes no existing byte,
+ * renaming splices the characters of exactly one label argument, and a re-parent
+ * *moves* one block (an element's line, or a boundary's whole `{ ... }` block)
+ * to its new parent, re-indented, changing nothing else. The parsed
  * model is never re-serialised (it is lossy — it drops `Rel` technology,
  * direction variants, comments and directives). The package
  * never writes anywhere; the host applies the returned text.
@@ -115,14 +117,30 @@ export interface C4RenameEdit {
 }
 
 /**
+ * Move an element, or a boundary together with its whole `{ ... }` block, into
+ * another boundary or out to the top level. Only the moved lines change (they
+ * move to the end of the destination and are re-indented to its sibling indent);
+ * aliases never change, so relationships and manual positions keyed by alias
+ * survive. Omit `parent` for the top level.
+ */
+export interface C4ReparentEdit {
+  kind: 'reparent';
+  /** Alias of the element or boundary to move */
+  id: string;
+  /** Alias of the destination boundary; omit for the top level */
+  parent?: string;
+}
+
+/**
  * A structural edit. A discriminated union on `kind`; further members (delete,
- * re-parent, edit relationship) can be added without breaking callers.
+ * edit relationship) can be added without breaking callers.
  */
 export type C4Edit =
   | C4AddElementEdit
   | C4AddBoundaryEdit
   | C4AddRelationshipEdit
-  | C4RenameEdit;
+  | C4RenameEdit
+  | C4ReparentEdit;
 
 export type C4EditErrorCode =
   | 'parse-error'
@@ -135,6 +153,7 @@ export type C4EditErrorCode =
   | 'unknown-element'
   | 'stale-target'
   | 'no-label-argument'
+  | 'move-into-self'
   | 'invalid-result';
 
 export type ApplyC4EditResult =
@@ -142,21 +161,25 @@ export type ApplyC4EditResult =
       ok: true;
       /**
        * The new source: the original with exactly one contiguous block inserted
-       * (add: one line, or two for `add-boundary`), or with one label argument
-       * replaced (rename; unchanged if the label was)
+       * (add: one line, or two for `add-boundary`), with one label argument
+       * replaced (rename; unchanged if the label was), or with exactly one block
+       * moved and re-indented (reparent; unchanged if already under that parent)
        */
       source: string;
       /**
        * The line as it now reads, without its line terminator: the first
-       * inserted line (add; the opening line for a boundary) or the patched
-       * line (rename)
+       * inserted line (add; the opening line for a boundary), the patched
+       * line (rename) or the first moved line as it now reads (reparent)
        */
       insertedLine: string;
-      /** Every inserted line, in order (one for elements and relationships, two for a boundary) */
+      /**
+       * Every inserted line, in order (one for elements and relationships, two
+       * for a new boundary; the whole moved block, as it now reads, for reparent)
+       */
       insertedLines: string[];
-      /** The label as written (sanitised, or the placeholder) */
+      /** The label as written (sanitised, or the placeholder); the element's name for reparent */
       label: string;
-      /** The new node's alias (add-element and add-boundary) */
+      /** The new node's alias (add-element and add-boundary), or the moved id (reparent) */
       alias?: string;
     }
   | { ok: false; code: C4EditErrorCode; message: string };
@@ -228,23 +251,32 @@ function makeDoc(source: string): Doc {
   return { source, lines, lineStarts, eol: detectEol(source) };
 }
 
+/** A pure insertion of `text` at character offset `at` of the original source. */
+interface Insertion {
+  at: number;
+  text: string;
+}
+
+function applyInsertion(doc: Doc, ins: Insertion): string {
+  return doc.source.slice(0, ins.at) + ins.text + doc.source.slice(ins.at);
+}
+
 /** Insert `text` as a new line immediately before line `k` (0-based). */
-function insertBeforeLine(doc: Doc, k: number, text: string): string {
-  const at = doc.lineStarts[k];
-  return doc.source.slice(0, at) + text + doc.eol + doc.source.slice(at);
+function insertionBeforeLine(doc: Doc, k: number, text: string): Insertion {
+  return { at: doc.lineStarts[k], text: text + doc.eol };
 }
 
 /** Insert `text` as a new line immediately after line `k` (0-based). */
-function insertAfterLine(doc: Doc, k: number, text: string): string {
-  if (k + 1 < doc.lines.length) return insertBeforeLine(doc, k + 1, text);
+function insertionAfterLine(doc: Doc, k: number, text: string): Insertion {
+  if (k + 1 < doc.lines.length) return insertionBeforeLine(doc, k + 1, text);
   // `k` is the final, unterminated line: a pure insertion of eol + text.
-  return doc.source + doc.eol + text;
+  return { at: doc.source.length, text: doc.eol + text };
 }
 
 /** Insert at the end of the text, keeping a trailing newline if there is one. */
-function insertAtEnd(doc: Doc, text: string): string {
-  if (doc.source === '' || doc.source.endsWith('\n')) return doc.source + text + doc.eol;
-  return doc.source + doc.eol + text;
+function insertionAtEnd(doc: Doc, text: string): Insertion {
+  if (doc.source === '' || doc.source.endsWith('\n')) return { at: doc.source.length, text: text + doc.eol };
+  return { at: doc.source.length, text: doc.eol + text };
 }
 
 /** Last line index used by anything parsed (elements, close lines, rels). */
@@ -259,11 +291,11 @@ function lastContentLine(spans: C4SourceSpans): number {
  * Fallback insertion for a source with nothing to anchor on: before the first
  * `@enduml` after all parsed content, else at the end of the text.
  */
-function insertBeforeEndOrAtEnd(doc: Doc, spans: C4SourceSpans, text: string): string {
+function insertionBeforeEndOrAtEnd(doc: Doc, spans: C4SourceSpans, text: string): Insertion {
   for (let i = lastContentLine(spans) + 1; i < doc.lines.length; i++) {
-    if (doc.lines[i].trim().startsWith('@enduml')) return insertBeforeLine(doc, i, text);
+    if (doc.lines[i].trim().startsWith('@enduml')) return insertionBeforeLine(doc, i, text);
   }
-  return insertAtEnd(doc, text);
+  return insertionAtEnd(doc, text);
 }
 
 /** Last line a top-level element occupies (its whole block, if it has one). */
@@ -306,6 +338,8 @@ export function applyC4Edit(source: string, edit: C4Edit): ApplyC4EditResult {
       return applyAddRelationship(doc, parsed.diagram, parsed.spans, edit);
     case 'rename':
       return applyRename(doc, parsed.diagram, parsed.spans, edit);
+    case 'reparent':
+      return applyReparent(doc, parsed.diagram, parsed.spans, edit);
     default: {
       const never: never = edit;
       return fail('parse-error', `Unknown edit kind: ${(never as { kind?: string }).kind}`);
@@ -352,7 +386,10 @@ function resolvePlacement(
   diagram: C4Diagram,
   spans: C4SourceSpans,
   parent: string | undefined,
+  /** Lines `[start, end]` of a block being moved: ignored as a sibling and as the top-level anchor */
+  exclude?: { start: number; end: number },
 ): PlacementResult {
+  const excluded = (line: number) => exclude !== undefined && line >= exclude.start && line <= exclude.end;
   if (parent !== undefined) {
     const idx = diagram.elements.findIndex((e) => e.id === parent);
     if (idx === -1 || !isBoundary(diagram.elements[idx])) {
@@ -370,8 +407,8 @@ function resolvePlacement(
     }
     // Indent like the last direct child; else boundary indent + one unit.
     let siblingLine = -1;
-    for (const e of spans.elements) if (e.parent === parent) siblingLine = Math.max(siblingLine, e.line);
-    for (const r of spans.relationships) if (r.parent === parent) siblingLine = Math.max(siblingLine, r.line);
+    for (const e of spans.elements) if (e.parent === parent && !excluded(e.line)) siblingLine = Math.max(siblingLine, e.line);
+    for (const r of spans.relationships) if (r.parent === parent && !excluded(r.line)) siblingLine = Math.max(siblingLine, r.line);
     const indent =
       siblingLine >= 0
         ? leadingWhitespace(doc.lines[siblingLine])
@@ -383,7 +420,7 @@ function resolvePlacement(
   let anchor = -1;
   let anchorLine = -1;
   spans.elements.forEach((e, i) => {
-    if (e.parent === undefined) {
+    if (e.parent === undefined && !excluded(e.line)) {
       const end = elementEndLine(spans, i);
       if (end > anchor) {
         anchor = end;
@@ -397,16 +434,21 @@ function resolvePlacement(
   return { ok: true, placement: { mode: 'end', indent: '' } };
 }
 
-/** Insert `text` (one or more lines joined by the file's EOL) at a resolved placement. */
-function insertAtPlacement(doc: Doc, spans: C4SourceSpans, placement: Placement, text: string): string {
+/** The insertion of `text` (one or more lines joined by the file's EOL) at a resolved placement. */
+function insertionAtPlacement(doc: Doc, spans: C4SourceSpans, placement: Placement, text: string): Insertion {
   switch (placement.mode) {
     case 'before':
-      return insertBeforeLine(doc, placement.line, text);
+      return insertionBeforeLine(doc, placement.line, text);
     case 'after':
-      return insertAfterLine(doc, placement.line, text);
+      return insertionAfterLine(doc, placement.line, text);
     case 'end':
-      return insertBeforeEndOrAtEnd(doc, spans, text);
+      return insertionBeforeEndOrAtEnd(doc, spans, text);
   }
+}
+
+/** Insert `text` at a resolved placement. */
+function insertAtPlacement(doc: Doc, spans: C4SourceSpans, placement: Placement, text: string): string {
+  return applyInsertion(doc, insertionAtPlacement(doc, spans, placement, text));
 }
 
 function applyAddElement(
@@ -504,10 +546,10 @@ function applyAddRelationship(
   let line: string;
   if (anchor >= 0) {
     line = leadingWhitespace(doc.lines[anchorLine]) + body;
-    newSource = insertAfterLine(doc, anchor, line);
+    newSource = applyInsertion(doc, insertionAfterLine(doc, anchor, line));
   } else {
     line = body;
-    newSource = insertBeforeEndOrAtEnd(doc, spans, body);
+    newSource = applyInsertion(doc, insertionBeforeEndOrAtEnd(doc, spans, body));
   }
   return verify(
     newSource,
@@ -626,6 +668,162 @@ function verifyRename(
   }
   const written = patchedLine.replace(/\r$/, '');
   return { ok: true, source: newSource, insertedLine: written, insertedLines: [written], label };
+}
+
+// =============================================================================
+// REPARENT
+// =============================================================================
+
+/** Swap `oldIndent` for `newIndent` on every non-blank line that starts with it. */
+function reindentBlock(lines: string[], oldIndent: string, newIndent: string): string[] {
+  const out = lines.map((line) => {
+    const body = line.endsWith('\r') ? line.slice(0, -1) : line;
+    const cr = line.endsWith('\r') ? '\r' : '';
+    if (body.trim() === '') return line;
+    return body.startsWith(oldIndent) ? newIndent + body.slice(oldIndent.length) + cr : line;
+  });
+  return out;
+}
+
+function stripCr(line: string): string {
+  return line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+function applyReparent(
+  doc: Doc,
+  diagram: C4Diagram,
+  spans: C4SourceSpans,
+  edit: C4ReparentEdit,
+): ApplyC4EditResult {
+  const idx = diagram.elements.findIndex((e) => e.id === edit.id);
+  if (idx === -1) return fail('unknown-element', `'${edit.id}' is not an element in this diagram`);
+  const element = diagram.elements[idx];
+  const span = spans.elements[idx];
+  const first = span.line;
+  const last = span.closeLine ?? span.line;
+
+  if (edit.parent !== undefined) {
+    const parentIdx = diagram.elements.findIndex((e) => e.id === edit.parent);
+    if (parentIdx === -1 || !isBoundary(diagram.elements[parentIdx])) {
+      return fail('unknown-parent', `'${edit.parent}' is not a boundary in this diagram`);
+    }
+    // The destination must not be the moved boundary or inside it.
+    const byId = new Map(diagram.elements.map((e) => [e.id, e]));
+    const seen = new Set<string>();
+    for (let cur: string | undefined = edit.parent; cur !== undefined && !seen.has(cur); cur = byId.get(cur)?.parent) {
+      if (cur === edit.id) {
+        return fail('move-into-self', `'${edit.id}' cannot be moved into itself or into one of its own descendants`);
+      }
+      seen.add(cur);
+    }
+  }
+
+  const movedLines = doc.lines.slice(first, last + 1);
+  if (edit.parent === element.parent) {
+    const lines = movedLines.map(stripCr);
+    return { ok: true, source: doc.source, insertedLine: lines[0], insertedLines: lines, label: element.name, alias: edit.id };
+  }
+
+  const placed = resolvePlacement(doc, diagram, spans, edit.parent, { start: first, end: last });
+  if (!placed.ok) return placed.result;
+
+  const reindented = reindentBlock(movedLines, leadingWhitespace(movedLines[0]), placed.placement.indent);
+  const writtenLines = reindented.map(stripCr);
+  // Inner lines keep their own line terminators; the last takes the destination's.
+  const block = [...reindented.slice(0, -1), writtenLines[writtenLines.length - 1]].join('\n');
+  const insertion = insertionAtPlacement(doc, spans, placed.placement, block);
+
+  // Removal range: the moved lines with their terminators (and, for a final unterminated line,
+  // the preceding terminator instead).
+  let removeStart = doc.lineStarts[first];
+  const removeEnd = last + 1 < doc.lines.length ? doc.lineStarts[last + 1] : doc.source.length;
+  if (last + 1 >= doc.lines.length && removeStart > 0) {
+    removeStart -= doc.source[removeStart - 2] === '\r' ? 2 : 1;
+  }
+
+  let newSource: string;
+  if (insertion.at >= removeEnd) {
+    newSource =
+      doc.source.slice(0, removeStart) +
+      doc.source.slice(removeEnd, insertion.at) +
+      insertion.text +
+      doc.source.slice(insertion.at);
+  } else if (insertion.at <= removeStart) {
+    newSource =
+      doc.source.slice(0, insertion.at) +
+      insertion.text +
+      doc.source.slice(insertion.at, removeStart) +
+      doc.source.slice(removeEnd);
+  } else {
+    return fail('invalid-result', 'The edit could not be moved cleanly in this source');
+  }
+  return verifyReparent(newSource, diagram, spans.elements[idx], edit, writtenLines);
+}
+
+/**
+ * Re-parse a moved source and check that only the moved item changed parent:
+ * the same elements (ids, types, names, properties), every one under its
+ * original parent except the moved id, and the same relationships as a multiset
+ * (a moved block that holds `Rel` lines changes their parse order).
+ */
+function verifyReparent(
+  newSource: string,
+  before: C4Diagram,
+  movedSpan: C4SourceSpans['elements'][number],
+  edit: C4ReparentEdit,
+  writtenLines: string[],
+): ApplyC4EditResult {
+  const bad = () => fail('invalid-result', 'The element could not be moved cleanly in this source');
+  const after = parseC4WithSpans(newSource);
+  if (!after.diagram || after.errors.length > 0) return bad();
+  const { elements, relationships } = after.diagram;
+  if (elements.length !== before.elements.length || relationships.length !== before.relationships.length) {
+    return bad();
+  }
+
+  const beforeById = new Map(before.elements.map((e) => [e.id, e]));
+  let movedAfterIdx = -1;
+  for (let i = 0; i < elements.length; i++) {
+    const a = elements[i];
+    const b = beforeById.get(a.id);
+    if (!b) return bad();
+    const expectedParent = a.id === edit.id ? edit.parent : b.parent;
+    if (
+      a.type !== b.type ||
+      a.name !== b.name ||
+      a.parent !== expectedParent ||
+      JSON.stringify(a.properties) !== JSON.stringify(b.properties)
+    ) {
+      return bad();
+    }
+    if (a.id === edit.id) movedAfterIdx = i;
+  }
+  if (movedAfterIdx === -1) return bad();
+
+  const relKey = (r: { sourceId: string; targetId: string; label: string; technology?: string }) =>
+    JSON.stringify([r.sourceId, r.targetId, r.label, r.technology ?? null]);
+  const counts = new Map<string, number>();
+  for (const r of before.relationships) counts.set(relKey(r), (counts.get(relKey(r)) ?? 0) + 1);
+  for (const r of relationships) {
+    const n = counts.get(relKey(r));
+    if (!n) return bad();
+    counts.set(relKey(r), n - 1);
+  }
+
+  // The moved block keeps its shape (a boundary's block is as many lines as before).
+  const afterSpan = after.spans.elements[movedAfterIdx];
+  const beforeLen = movedSpan.closeLine === undefined ? undefined : movedSpan.closeLine - movedSpan.line;
+  const afterLen = afterSpan.closeLine === undefined ? undefined : afterSpan.closeLine - afterSpan.line;
+  if (beforeLen !== afterLen) return bad();
+
+  return {
+    ok: true,
+    source: newSource,
+    insertedLine: writtenLines[0],
+    insertedLines: writtenLines,
+    label: before.elements.find((e) => e.id === edit.id)!.name,
+    alias: edit.id,
+  };
 }
 
 /** What `verify` expects the edit to have added. */

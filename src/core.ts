@@ -19,6 +19,7 @@ export type {
   C4AddBoundaryEdit,
   C4AddRelationshipEdit,
   C4RenameEdit,
+  C4ReparentEdit,
   C4RenameTarget,
   C4RelationshipTarget,
   C4EditErrorCode,
