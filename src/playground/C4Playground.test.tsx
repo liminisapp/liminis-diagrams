@@ -176,7 +176,24 @@ describe('C4Playground structural editing', () => {
       fireEvent.change(input, { target: { value: label } });
       fireEvent.keyDown(input, { key: 'Enter' });
     };
-    return { c, source, rects, add };
+    const addBoundary = (kind: string, at: { x: number; y: number }, label: string, target?: Element) => {
+      fireEvent.contextMenu(target ?? c.querySelector('svg[data-diagram]')!, { clientX: at.x, clientY: at.y });
+      fireEvent.click(c.querySelector(`[data-boundary-kind="${kind}"]`)!);
+      const input = c.querySelector<HTMLInputElement>('[data-c4-label-input]')!;
+      fireEvent.change(input, { target: { value: label } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    };
+    return { c, source, rects, add, addBoundary };
+  }
+
+  /** `after` is `before` with exactly one contiguous block of two lines inserted: nothing else changed. */
+  function insertedBlock(before: string, after: string): string[] {
+    const b = before.split('\n');
+    const a = after.split('\n');
+    expect(a.length).toBe(b.length + 2);
+    const at = a.findIndex((line, i) => line !== b[i]);
+    expect(a.filter((_, i) => i < at || i >= at + 2)).toEqual(b);
+    return a.slice(at, at + 2);
   }
 
   /** `after` is `before` with exactly one line inserted: nothing else changed. */
@@ -210,6 +227,66 @@ describe('C4Playground structural editing', () => {
     expect(insertedLine(before, source())).toBe('  Component(cache, "Cache")');
     const lines = source().split('\n');
     expect(lines.indexOf('  Component(cache, "Cache")')).toBe(lines.indexOf('}') - 1);
+  });
+
+  it('adds a top-level boundary as one two-line block, where it was placed, without moving others', () => {
+    const { source, rects, addBoundary } = setup();
+    const before = source();
+    const rectsBefore = rects();
+    addBoundary('containerBoundary', { x: 900, y: 900 }, 'API Application');
+
+    expect(insertedBlock(before, source())).toEqual(['Container_Boundary(api_application, "API Application") {', '}']);
+    const after = rects();
+    for (const [id, pos] of Object.entries(rectsBefore)) expect(after[id]).toEqual(pos);
+    // Centred on the tap point (240x160 empty boundary).
+    expect(after.api_application).toEqual(['780', '820']);
+  });
+
+  it('adds a boundary, then an element inside it, with the existing flow', () => {
+    const { c, source, add, addBoundary } = setup();
+    addBoundary('systemBoundary', { x: 900, y: 900 }, 'Billing');
+    const box = c.querySelector('[data-node-id="billing"]')!;
+    expect(Number(box.getAttribute('width'))).toBeGreaterThan(0);
+    expect(Number(box.getAttribute('height'))).toBeGreaterThan(0);
+
+    const before = source();
+    const x = Number(box.getAttribute('x')) + Number(box.getAttribute('width')) / 2;
+    const y = Number(box.getAttribute('y')) + Number(box.getAttribute('height')) / 2;
+    add('component', { x, y }, 'Invoice', box);
+    expect(insertedLine(before, source())).toBe('  Component(invoice, "Invoice")');
+    const lines = source().split('\n');
+    const open = lines.indexOf('System_Boundary(billing, "Billing") {');
+    expect(open).toBeGreaterThan(-1);
+    expect(lines[open + 1]).toBe('  Component(invoice, "Invoice")');
+    expect(lines[open + 2]).toBe('}');
+  });
+
+  it('adds a boundary inside a boundary, indented like its sibling', () => {
+    const { c, source, addBoundary } = setup();
+    const before = source();
+    const b = c.querySelector('[data-node-id="b"]')!;
+    addBoundary(
+      'containerBoundary',
+      { x: Number(b.getAttribute('x')) + Number(b.getAttribute('width')) - 10, y: Number(b.getAttribute('y')) + Number(b.getAttribute('height')) - 10 },
+      'Inner',
+      b,
+    );
+    expect(insertedBlock(before, source())).toEqual(['  Container_Boundary(inner, "Inner") {', '  }']);
+  });
+
+  it('renders a hand-written empty boundary as a box that accepts children', () => {
+    cleanup();
+    measureAs(800, 600);
+    const { container: c } = render(<C4Playground source={'Boundary(lone, "Lone") {\n}\nPerson(p, "P")'} />);
+    const box = c.querySelector('[data-node-id="lone"]')!;
+    expect(Number(box.getAttribute('height'))).toBeGreaterThan(55);
+    const x = Number(box.getAttribute('x')) + 20;
+    const y = Number(box.getAttribute('y')) + Number(box.getAttribute('height')) - 20;
+    fireEvent.contextMenu(box, { clientX: x, clientY: y });
+    fireEvent.click(c.querySelector('[data-kind="system"]')!);
+    fireEvent.keyDown(c.querySelector('[data-c4-label-input]')!, { key: 'Enter' });
+    const text = c.querySelector<HTMLTextAreaElement>('.c4-playground__source')!.value;
+    expect(text.split('\n').slice(0, 3)).toEqual(['Boundary(lone, "Lone") {', '  System(system, "System")', '}']);
   });
 
   it('adds a relationship by dragging, keeping comments and Rel_D intact', () => {

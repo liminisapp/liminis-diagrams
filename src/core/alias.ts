@@ -10,7 +10,8 @@ import { C4_MACRO_NAMES } from './parser';
 
 /**
  * The element kinds that can be added. `*Db` are the cylinder variants.
- * `_Ext`, `Queue`, boundaries and deployment nodes are intentionally absent.
+ * `_Ext`, `Queue` and deployment nodes are intentionally absent; boundaries are
+ * added separately (see {@link C4AddableBoundaryKind}).
  */
 export type C4AddableElementKind =
   | 'person'
@@ -53,10 +54,39 @@ export const C4_DEFAULT_LABELS: Record<C4AddableElementKind, string> = {
   componentDb: 'Database',
 };
 
+/**
+ * The boundary kinds that can be added (empty, via `add-boundary`).
+ * `Enterprise_Boundary` and deployment nodes are intentionally absent.
+ */
+export type C4AddableBoundaryKind = 'systemBoundary' | 'containerBoundary' | 'boundary';
+
+export const C4_ADDABLE_BOUNDARY_KINDS: readonly C4AddableBoundaryKind[] = [
+  'systemBoundary',
+  'containerBoundary',
+  'boundary',
+];
+
+/** Macro each addable boundary kind is written as. */
+export const C4_BOUNDARY_KIND_MACRO: Record<C4AddableBoundaryKind, string> = {
+  systemBoundary: 'System_Boundary',
+  containerBoundary: 'Container_Boundary',
+  boundary: 'Boundary',
+};
+
+/** Placeholder label used when the user supplies none. */
+export const C4_BOUNDARY_DEFAULT_LABELS: Record<C4AddableBoundaryKind, string> = {
+  systemBoundary: 'System boundary',
+  containerBoundary: 'Container boundary',
+  boundary: 'Boundary',
+};
+
 /** Label given to a relationship created by dragging from one element to another. */
 export const C4_DEFAULT_RELATIONSHIP_LABEL = 'Uses';
 
-const ALIAS_FALLBACK: Record<C4AddableElementKind, string> = {
+const ALIAS_FALLBACK: Record<C4AddableElementKind | C4AddableBoundaryKind, string> = {
+  systemBoundary: 'system_boundary',
+  containerBoundary: 'container_boundary',
+  boundary: 'boundary',
   person: 'person',
   system: 'system',
   container: 'container',
@@ -112,7 +142,7 @@ function slugify(label: string): string {
 export function generateC4Alias(
   label: string,
   existingIds: Iterable<string>,
-  kind: C4AddableElementKind = 'system',
+  kind: C4AddableElementKind | C4AddableBoundaryKind = 'system',
 ): string {
   const taken = [...existingIds];
   let base = slugify(label);

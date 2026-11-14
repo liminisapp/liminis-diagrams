@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Issue**: #92 — Add elements and relationships from the diagram
+**Amended by**: [ADR-95](95-multi-line-boundary-insertion.md) — decisions 1 and 2 and the "Diffs stay one line" and "Not built" consequences
 
 ## Context
 
@@ -17,10 +18,11 @@ the package never writes anywhere, and the `./core` entry stays React-free.
    re-serialisation of the model. `applyC4Edit(source, edit)` (in `./core`, pure) re-parses
    the text it is given — it never trusts the renderer's snapshot — and returns the source
    with exactly one line inserted. Offsets, not a re-joined line array, so CRLF and a missing
-   trailing newline survive byte for byte.
+   trailing newline survive byte for byte. *Amended by ADR-95: "exactly one line" is now "exactly one
+   contiguous block"; `add-boundary` inserts two lines (opening line and closing `}`) at one point.*
 2. **`C4Edit` is a discriminated union on `kind`** (`add-element`, `add-relationship`).
    Delete, rename, re-parent and edit-relationship can be added as further members without
-   breaking callers.
+   breaking callers. *ADR-95 adds `add-boundary`.*
 3. **Result type, not exceptions.** `{ ok: true, source, … } | { ok: false, code, message }`.
    A host must show "cannot add inside this boundary" without a try/catch, and an agent can
    branch on `code`. The output is re-parsed before it is returned (`invalid-result` if it
@@ -72,7 +74,8 @@ the package never writes anywhere, and the `./core` entry stays React-free.
 
 ## Consequences
 
-- Diffs stay one line, which is what the diagram-wiki goal (#27) needs.
+- Diffs stay one line, which is what the diagram-wiki goal (#27) needs. *(ADR-95: one contiguous
+  block for `add-boundary`.)*
 - Hosts own applying the edit and must apply text and positions in one update, and must merge
   rather than clear positions. `liminis-editor` clears its layout whenever the set of element
   ids changes; that must become a merge before the feature is usable there (separate work in
@@ -81,4 +84,5 @@ the package never writes anywhere, and the `./core` entry stays React-free.
   variable fallbacks and targeted with `data-c4-menu`. The native context menu is
   suppressed over the diagram in edit mode with `onEdit` only.
 - Not built: delete, rename, re-parent, editing an existing relationship, deployment nodes
-  and boundaries as addable kinds, relationships on boundaries.
+  and boundaries as addable kinds, relationships on boundaries. *(ADR-95 builds boundaries as an
+  addable kind; the rest stay unbuilt.)*

@@ -39,8 +39,10 @@ library's.
 From the release after 0.1.6, a host that passes `onEdit` also gets an **add-element menu**
 (right-click the canvas, or long-press on touch) and a connect handle on each element.
 Choosing a kind in the menu places a new element where you opened it (name it inline);
-dragging from an element's handle to another adds a `Rel` (label it inline, "Uses" by default). Each
-is reported to the host as a one-line change to the source, which `applyC4Edit` produces —
+dragging from an element's handle to another adds a `Rel` (label it inline, "Uses" by default). The menu also
+has a separate **Boundaries** group that adds an empty boundary you can then right-click into
+and fill. Each is reported to the host as a small insertion into the source (one line, or a
+two-line block for a boundary), which `applyC4Edit` produces —
 see [Recipe 4](../recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities).
 The playground below is built from the published package, so it does not offer these yet.
 

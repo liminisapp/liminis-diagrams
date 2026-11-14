@@ -171,7 +171,7 @@ It *reports* an edit, you apply it. This is the same controlled pattern as
 `onPositionChange`, and it means undo, persistence and conflict handling are whatever
 your host already has.
 
-In edit mode, **and only when you pass `onEdit`**, `C4InteractiveRenderer` offers two
+In edit mode, **and only when you pass `onEdit`**, `C4InteractiveRenderer` offers three
 things. (A host that passes `isEditMode` for dragging alone sees no change at all.)
 
 - **Add an element.** Right-click empty canvas — or inside a boundary to add it there — to
@@ -185,6 +185,16 @@ things. (A host that passes `isEditMode` for dragging alone sees no change at al
   or `pointercancel` of the pointer that opened it, and reports nothing. While editing is
   on the browser's own context menu is suppressed over the diagram; a read-only render,
   and a host that passes `isEditMode` without `onEdit`, keep it.
+- **Add a boundary.** The same menu has a second group, set apart by a rule and a small
+  heading, listing the boundary kinds: System boundary, Container boundary and Boundary
+  (`System_Boundary`, `Container_Boundary`, `Boundary`). The label flow is the same as for
+  an element. It adds an **empty** boundary where you opened the menu: at top level on
+  empty canvas, or nested in the innermost boundary containing the point. An empty boundary
+  is drawn as a visible, dashed box (at least 240×160), so you can right-click inside it and
+  add an element, or another boundary, with the flow above. A boundary nested inside another
+  is kept within its parent's content area, so the parent does not move. Boundaries have no
+  connect handle and cannot be relationship endpoints. Wrapping existing elements in a new
+  boundary is not offered.
 - **Add a relationship.** Drag from the dot on an element's right edge to another
   element. On release a label input appears near the midpoint of the new edge, pre-filled
   with "Uses": Enter confirms (empty falls back to "Uses"), Escape or losing focus cancels
@@ -269,10 +279,11 @@ function EditableDiagram({ initial }: { initial: string }) {
 
 This is `C4Playground`'s own wiring, and the playground's end-to-end test
 (`src/playground/C4Playground.test.tsx`) drives exactly this: add a top-level element,
-add an element inside a boundary, connect two elements, diffing the source each time.
+add an element inside a boundary, add a boundary and then an element inside it, connect two
+elements, diffing the source each time.
 
-**Verified** by that test: each action inserts exactly one line and no other line
-changes; previously positioned elements keep their positions; the first edit on a diagram
+**Verified** by that test: each action inserts exactly one contiguous block (one line, or
+two for a boundary) and no other line changes; previously positioned elements keep their positions; the first edit on a diagram
 with no manual positions moves no element.
 
 ### `applyC4Edit`, headless
@@ -290,11 +301,31 @@ const r = applyC4Edit(source, { kind: 'add-element', elementKind: 'system', labe
 // r = { ok: true, source: <...>, insertedLine: 'System(billing, "Billing")', label: 'Billing', alias: 'billing' }
 ```
 
-The result source is the input with one line inserted after the last top-level element or
+The result source is the input with one line (or, for `add-boundary`, one two-line block) inserted after the last top-level element or
 boundary (wherever that sits relative to any `Rel` lines, and always before `@enduml`). An element with `parent` set to a
 boundary id goes inside that boundary's `{ ... }` block, indented like its siblings. A
 `add-relationship` edit inserts one `Rel(source, target, "label")` line after the last
 top-level `Rel`.
+
+`add-boundary` adds an empty boundary, the one edit that inserts more than a single line:
+an opening line and a closing `}`, **together at one point**. "Exactly one line" is
+therefore "exactly one contiguous block" for this kind only; no existing line changes.
+
+```ts
+const b = applyC4Edit(source, { kind: 'add-boundary', boundaryKind: 'containerBoundary', label: 'API Application' });
+// b = { ok: true, source: <...>, label: 'API Application', alias: 'api_application',
+//       insertedLine: 'Container_Boundary(api_application, "API Application") {',
+//       insertedLines: ['Container_Boundary(api_application, "API Application") {', '}'] }
+
+// The new boundary can take children straight away:
+applyC4Edit(b.source, { kind: 'add-element', elementKind: 'component', label: 'Controller', parent: 'api_application' });
+```
+
+`boundaryKind` is `systemBoundary`, `containerBoundary` or `boundary`; `parent` nests it in
+an existing boundary. Alias, label, indentation and the error codes behave exactly as for
+`add-element`, and the closing `}` is aligned with the opening line. Every successful
+result carries `insertedLines` (one element for the other kinds); `insertedLine` is the
+first of them.
 
 Failures are returned, not thrown: `{ ok: false, code, message }`, where `code` is one of
 `parse-error`, `unknown-parent`, `unknown-endpoint`, `boundary-cannot-take-children`
@@ -304,7 +335,8 @@ would mean rewriting an existing line), `alias-collision`, `invalid-alias`,
 
 Four guarantees worth relying on:
 
-- **The source stays canonical.** An edit is a line insertion at a character offset. No
+- **The source stays canonical.** An edit is an insertion (one line, or one two-line block
+  for a boundary) at a character offset. No
   existing byte changes: comments, `Rel` technology arguments, `Rel_D`-style variants,
   `!include`, `title`, `SHOW_LEGEND()` and `LAYOUT_*` all survive, and CRLF files get CRLF.
   The parsed model is lossy and is never re-serialised.
@@ -320,8 +352,9 @@ Four guarantees worth relying on:
 
 ### Styling the menu
 
-The add-element menu is the package's only built-in control. It uses inline styles and
+The add menu is the package's only built-in control. It uses inline styles and
 reads `--c4-accent`, `--c4-border` and `--c4-bg`, and it carries `data-c4-menu` for
-targeting (each item has `data-kind`). It replaces the toolbar palette (`data-c4-palette`)
+targeting. It has two `role="group"`s: element items carry `data-kind`, boundary items
+carry `data-boundary-kind`. It replaces the toolbar palette (`data-c4-palette`)
 of earlier drafts, which no longer exists. The inline label inputs — for an element and
-for a relationship — carry `data-c4-label-input`.
+for a relationship, and for a boundary — carry `data-c4-label-input`.

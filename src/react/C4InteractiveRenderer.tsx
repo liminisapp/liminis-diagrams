@@ -13,13 +13,15 @@
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { C4RendererContent, computeLegendInfo, normaliseZoom } from './renderer';
-import { layoutC4Diagram } from '../core/layout';
+import { BOUNDARY_HEADER_HEIGHT, BOUNDARY_PADDING, EMPTY_BOUNDARY_SIZE, layoutC4Diagram } from '../core/layout';
 import type { LayoutResult, LayoutNode, C4Diagram, C4Element, Point } from '../core/types';
 import { isBoundary } from '../core/types';
 import {
+  C4_BOUNDARY_DEFAULT_LABELS,
   C4_DEFAULT_LABELS,
   C4_DEFAULT_RELATIONSHIP_LABEL,
   generateC4Alias,
+  type C4AddableBoundaryKind,
   type C4AddableElementKind,
 } from '../core/alias';
 import { sanitizeC4Text, type C4Edit } from '../core/edit';
@@ -27,7 +29,7 @@ import { useC4DiagramDrag } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import { findBoundaryAt, findElementAt } from './hit-test';
 import { useC4LongPress } from './hooks/useC4LongPress';
-import { EditMenu } from './EditMenu';
+import { EditMenu, type EditMenuChoice } from './EditMenu';
 import { LabelInput } from './LabelInput';
 
 /** Synthetic ID used to store legend position in manual positions map */
@@ -47,8 +49,9 @@ export interface C4EditContext {
 }
 
 /** Default size of a freshly placed node, matching what layout gives new nodes. */
-function defaultNodeSize(kind: C4AddableElementKind): { width: number; height: number } {
-  return kind === 'person' ? { width: 120, height: 120 } : { width: 240, height: 80 };
+function defaultNodeSize(choice: EditMenuChoice): { width: number; height: number } {
+  if (choice.group === 'boundary') return { ...EMPTY_BOUNDARY_SIZE };
+  return choice.kind === 'person' ? { width: 120, height: 120 } : { width: 240, height: 80 };
 }
 
 /** The add-element context menu, open at a point on the canvas. */
@@ -71,14 +74,21 @@ interface PendingRel {
   y: number;
 }
 
-/** An element that has been placed and is waiting for its label. */
-interface PendingAdd {
-  kind: C4AddableElementKind;
+/** An element or empty boundary that has been placed and is waiting for its label. */
+type PendingAdd = {
   parent?: string;
   x: number;
   y: number;
   width: number;
   height: number;
+} & (
+  | { target: 'element'; kind: C4AddableElementKind }
+  | { target: 'boundary'; kind: C4AddableBoundaryKind }
+);
+
+/** The placeholder label for a pending add. */
+function pendingPlaceholder(p: PendingAdd): string {
+  return p.target === 'boundary' ? C4_BOUNDARY_DEFAULT_LABELS[p.kind] : C4_DEFAULT_LABELS[p.kind];
 }
 
 export interface C4InteractiveRendererProps {
@@ -509,15 +519,21 @@ export function C4InteractiveRenderer({
     openMenuAt(e.clientX, e.clientY, null);
   };
 
-  const handleSelectKind = (kind: C4AddableElementKind) => {
+  const handleSelectKind = (choice: EditMenuChoice) => {
     if (!menu) return;
-    const size = defaultNodeSize(kind);
-    const next: PendingAdd = {
-      kind,
-      x: Math.round(menu.x - size.width / 2),
-      y: Math.round(menu.y - size.height / 2),
-      ...size,
-    };
+    const size = defaultNodeSize(choice);
+    let x = Math.round(menu.x - size.width / 2);
+    let y = Math.round(menu.y - size.height / 2);
+    if (choice.group === 'boundary' && menu.parent !== undefined) {
+      // Keep a new nested boundary inside its parent's content area. Left of or above it, the
+      // parent would shift its own origin to contain the child, moving a node that already has a position.
+      const parentNode = layout.nodes.find((n) => n.id === menu.parent);
+      if (parentNode) {
+        x = Math.max(x, parentNode.x + BOUNDARY_PADDING);
+        y = Math.max(y, parentNode.y + BOUNDARY_HEADER_HEIGHT);
+      }
+    }
+    const next = { target: choice.group, kind: choice.kind, x, y, ...size } as PendingAdd;
     if (menu.parent !== undefined) next.parent = menu.parent;
     setMenu(null);
     setPending(next);
@@ -525,13 +541,16 @@ export function C4InteractiveRenderer({
 
   const handleConfirmLabel = (value: string) => {
     if (!pending) return;
-    const label = sanitizeC4Text(value) || C4_DEFAULT_LABELS[pending.kind];
+    const label = sanitizeC4Text(value) || pendingPlaceholder(pending);
     const alias = generateC4Alias(
       label,
       diagram.elements.map((e) => e.id),
       pending.kind,
     );
-    const edit: C4Edit = { kind: 'add-element', elementKind: pending.kind, label, alias };
+    const edit: C4Edit =
+      pending.target === 'boundary'
+        ? { kind: 'add-boundary', boundaryKind: pending.kind, label, alias }
+        : { kind: 'add-element', elementKind: pending.kind, label, alias };
     if (pending.parent !== undefined) edit.parent = pending.parent;
     const positions = buildPositions({ [alias]: { x: pending.x, y: pending.y } });
     setPending(null);
@@ -647,7 +666,7 @@ interface EditingProps {
   connectPointer: Point | null;
   onLongPressPointerDown: (e: React.PointerEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
-  onSelectKind: (kind: C4AddableElementKind) => void;
+  onSelectKind: (choice: EditMenuChoice) => void;
   onCloseMenu: () => void;
   onStartConnect: (sourceId: string, e: React.PointerEvent) => void;
   onConfirmLabel: (value: string) => void;
@@ -896,7 +915,7 @@ function C4InteractiveSvg({
         {/* Ghost of an element waiting for its label; not in the source yet */}
         {editing?.pending && (
           <rect
-            data-pending-element=""
+            {...(editing.pending.target === 'boundary' ? { 'data-pending-boundary': '' } : { 'data-pending-element': '' })}
             x={editing.pending.x}
             y={editing.pending.y}
             width={editing.pending.width}
@@ -953,8 +972,12 @@ function C4InteractiveSvg({
             left={(editing.pending.x - layout.viewBoxX) * scale}
             top={(editing.pending.y - layout.viewBoxY) * scale}
             width={editing.pending.width * scale}
-            height={editing.pending.height * scale}
-            initialValue={C4_DEFAULT_LABELS[editing.pending.kind]}
+            // A boundary's label sits in its header, not over the whole (large, mostly empty) box.
+            height={
+              (editing.pending.target === 'boundary' ? BOUNDARY_HEADER_HEIGHT : editing.pending.height) * scale
+            }
+            ariaLabel={editing.pending.target === 'boundary' ? 'Boundary label' : undefined}
+            initialValue={pendingPlaceholder(editing.pending)}
             isDarkMode={isDarkMode}
             onConfirm={editing.onConfirmLabel}
             onCancel={editing.onCancelLabel}

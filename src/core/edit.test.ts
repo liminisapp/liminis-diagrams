@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyC4Edit, sanitizeC4Text, type C4Edit } from './edit';
-import { parseC4, validateC4 } from './parser';
+import { parseC4, parseC4WithSpans, validateC4 } from './parser';
+import { isBoundary } from './types';
 
 /** Assert `after` is `before` with exactly one line inserted; nothing else changed. */
 function expectSingleLineInsertion(before: string, after: string, line: string, eol = '\n') {
@@ -465,5 +466,219 @@ describe('applyC4Edit: byte-identity of everything else (FR-004)', () => {
     if (!r.ok) return;
     expectSingleLineInsertion(src, r.source, r.insertedLine);
     expect(parseC4(r.source).errors).toEqual([]);
+  });
+});
+
+// =============================================================================
+// add-boundary
+// =============================================================================
+
+/** Assert `after` is `before` with exactly the given lines inserted as one contiguous block at one point. */
+function expectBlockInsertion(before: string, after: string, lines: string[], eol = '\n') {
+  const block = lines.join(eol);
+  for (const chunk of [block + eol, eol + block]) {
+    if (after.length !== before.length + chunk.length) continue;
+    for (let i = 0; i <= before.length; i++) {
+      if (after === before.slice(0, i) + chunk + before.slice(i)) return;
+    }
+  }
+  throw new Error(`not a block insertion of ${JSON.stringify(lines)}:\n${before}\n---\n${after}`);
+}
+
+const BOUNDARY_FIXTURE_LINES = [
+  "' a leading comment",
+  '@startuml',
+  '!include https://example.com/C4_Container.puml',
+  'title Payments  ',
+  'LAYOUT_LEFT_RIGHT()',
+  "' comment about the people",
+  'Person(user, "User", "A user")   \' trailing comment',
+  'Person_Ext(ext, "Ext")',
+  'System_Boundary(b, "B") {',
+  '  ' + "' inside comment",
+  '  Container(api, "API", "Go", "does work")',
+  '  ContainerDb(db, "DB", "PG")',
+  '  Rel_D(api, db, "Reads", "SQL/TCP")',
+  '}',
+  "' relationships",
+  'Rel(user, api, "Calls", "JSON/HTTPS")',
+  'BiRel(ext, api, "Sync")',
+  '@enduml',
+];
+
+const addBoundary = (over: Partial<Extract<C4Edit, { kind: 'add-boundary' }>> = {}): C4Edit => ({
+  kind: 'add-boundary',
+  boundaryKind: 'containerBoundary',
+  label: 'API Application',
+  ...over,
+});
+
+const MACROS = {
+  systemBoundary: 'System_Boundary',
+  containerBoundary: 'Container_Boundary',
+  boundary: 'Boundary',
+} as const;
+
+describe('applyC4Edit: add-boundary', () => {
+  for (const [eolName, eol] of [
+    ['LF', '\n'],
+    ['CRLF', '\r\n'],
+  ] as const) {
+    for (const boundaryKind of Object.keys(MACROS) as (keyof typeof MACROS)[]) {
+      for (const parent of [undefined, 'b']) {
+        it(`${boundaryKind} ${parent ? 'nested' : 'top-level'} (${eolName}) inserts one two-line block`, () => {
+          const src = BOUNDARY_FIXTURE_LINES.join(eol);
+          const r = apply(src, addBoundary({ boundaryKind, label: 'Inner', parent }));
+          expect(r.insertedLines).toHaveLength(2);
+          expect(r.insertedLine).toBe(r.insertedLines[0]);
+          expectBlockInsertion(src, r.source, r.insertedLines, eol);
+          // Every original line survives, in order, byte-identical.
+          const originals = src.split(eol);
+          let j = 0;
+          for (const line of r.source.split(eol)) if (line === originals[j]) j++;
+          expect(j).toBe(originals.length);
+          expect(r.insertedLines[0].trim()).toBe(`${MACROS[boundaryKind]}(inner, "Inner") {`);
+          expect(r.insertedLines[1].trim()).toBe('}');
+          expect(r.alias).toBe('inner');
+        });
+      }
+    }
+  }
+
+  it('parses, with the requested label and parent, and a closeLine', () => {
+    const r = apply(BOUNDARY_FIXTURE_LINES.join('\n'), addBoundary({ label: 'Inner', parent: 'b' }));
+    const parsed = parseC4WithSpans(r.source);
+    expect(parsed.errors).toEqual([]);
+    const idx = parsed.diagram!.elements.findIndex((e) => e.id === 'inner');
+    const el = parsed.diagram!.elements[idx];
+    expect(el.name).toBe('Inner');
+    expect(el.parent).toBe('b');
+    expect(isBoundary(el)).toBe(true);
+    expect(el.type).toBe('container');
+    const span = parsed.spans.elements[idx];
+    expect(span.closeLine).toBe(span.line + 1);
+  });
+
+  it('lands before the parent closing brace, after existing children, indented like siblings', () => {
+    const r = apply(BOUNDARY_FIXTURE_LINES.join('\n'), addBoundary({ label: 'Inner', parent: 'b' }));
+    const lines = r.source.split('\n');
+    const open = lines.indexOf('  Container_Boundary(inner, "Inner") {');
+    expect(open).toBe(lines.indexOf('  Rel_D(api, db, "Reads", "SQL/TCP")') + 1);
+    expect(lines[open + 1]).toBe('  }');
+    expect(lines[open + 2]).toBe('}');
+  });
+
+  it('lands after the last top-level block at top level', () => {
+    const r = apply(BOUNDARY_FIXTURE_LINES.join('\n'), addBoundary({ label: 'Inner' }));
+    const lines = r.source.split('\n');
+    const open = lines.indexOf('Container_Boundary(inner, "Inner") {');
+    expect(lines[open - 1]).toBe('}');
+    expect(lines[open + 1]).toBe('}');
+  });
+
+  it('indents an empty parent by one unit and aligns the closing brace', () => {
+    const src = '@startuml\nSystem_Boundary(b, "B") {\n}\n@enduml';
+    const r = apply(src, addBoundary({ boundaryKind: 'boundary', label: 'In', parent: 'b' }));
+    expect(r.insertedLines).toEqual(['  Boundary(in, "In") {', '  }']);
+    const tabbed = apply('@startuml\n\tSystem_Boundary(b, "B") {\n\t}\n@enduml', addBoundary({ parent: 'b' }));
+    expect(tabbed.insertedLines[0].startsWith('\t\t')).toBe(true);
+    expect(tabbed.insertedLines[1]).toBe('\t\t}');
+  });
+
+  it('keeps the tab-indented variant intact', () => {
+    const src = BOUNDARY_FIXTURE_LINES.map((l) => l.replace(/^ {2}/, '\t')).join('\n');
+    const r = apply(src, addBoundary({ parent: 'b' }));
+    expect(r.insertedLines[0].startsWith('\t')).toBe(true);
+    expectBlockInsertion(src, r.source, r.insertedLines);
+  });
+
+  it('works on a missing trailing newline (LF and CRLF) and with a trailing newline', () => {
+    for (const eol of ['\n', '\r\n']) {
+      for (const tail of ['', eol]) {
+        const src = ['Person(u, "U")', 'System(s, "S")'].join(eol) + tail;
+        const r = apply(src, addBoundary({ label: 'Edge' }));
+        expectBlockInsertion(src, r.source, r.insertedLines, eol);
+        expect(parseC4WithSpans(r.source).errors).toEqual([]);
+      }
+      // Nothing to anchor on at all.
+      const empty = apply('', addBoundary({ label: 'Only' }));
+      expect(empty.source).toBe('Container_Boundary(only, "Only") {\n}\n');
+    }
+  });
+
+  it('inserts before @enduml when there is nothing to anchor on', () => {
+    const r = apply('@startuml\n@enduml', addBoundary({ label: 'X' }));
+    expect(r.source).toBe('@startuml\nContainer_Boundary(x, "X") {\n}\n@enduml');
+  });
+
+  it('round trips: add a boundary, then an element, then a boundary into it', () => {
+    let src = BOUNDARY_FIXTURE_LINES.join('\n');
+    const a = apply(src, addBoundary({ label: 'Gateway', parent: 'b' }));
+    src = a.source;
+    const b = apply(src, { kind: 'add-element', elementKind: 'component', label: 'Ctl', parent: 'gateway' });
+    expect(b.source.replace(b.insertedLine + '\n', '')).toBe(src);
+    src = b.source;
+    const lines = src.split('\n');
+    const open = lines.indexOf(a.insertedLines[0]);
+    expect(lines[open + 1]).toBe(b.insertedLine);
+    expect(lines[open + 2]).toBe(a.insertedLines[1]);
+    const c = apply(src, addBoundary({ boundaryKind: 'boundary', label: 'Deep', parent: 'gateway' }));
+    const parsed = parseC4WithSpans(c.source);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.diagram!.elements.find((e) => e.id === 'deep')!.parent).toBe('gateway');
+    expect(parsed.diagram!.elements.find((e) => e.id === 'ctl')!.parent).toBe('gateway');
+  });
+
+  it('matches add-element alias behaviour', () => {
+    const src = '@startuml\nSystem(api_application, "x")\n@enduml';
+    expect(apply(src, addBoundary()).alias).toBe('api_application_2');
+    expect(apply(src, addBoundary({ alias: 'mine' })).alias).toBe('mine');
+    const bad = (alias: string) => applyC4Edit(src, addBoundary({ alias }));
+    expect(bad('api_application')).toMatchObject({ ok: false, code: 'alias-collision' });
+    expect(bad('API_APPLICATION')).toMatchObject({ ok: false, code: 'alias-collision' });
+    expect(bad('Boundary')).toMatchObject({ ok: false, code: 'alias-collision' });
+    expect(bad('1x')).toMatchObject({ ok: false, code: 'invalid-alias' });
+  });
+
+  it('uses per-kind placeholders and fallback aliases, and sanitises the label', () => {
+    const r = apply('@startuml\n@enduml', addBoundary({ boundaryKind: 'systemBoundary', label: '  ' }));
+    expect(r.label).toBe('System boundary');
+    expect(r.alias).toBe('system_boundary');
+    const q = apply('@startuml\n@enduml', addBoundary({ boundaryKind: 'boundary', label: 'a "b" \\ c\n{' }));
+    expect(q.insertedLines[0]).toBe(`Boundary(${q.alias}, "a 'b' / c {") {`);
+    expect(parseC4WithSpans(q.source).errors).toEqual([]);
+  });
+
+  it('returns typed errors and never throws', () => {
+    const cases: [string, C4Edit, string][] = [
+      ['Person(u, "U"', addBoundary(), 'parse-error'],
+      [BASIC, addBoundary({ parent: 'nope' }), 'unknown-parent'],
+      [BASIC, addBoundary({ parent: 'user' }), 'unknown-parent'],
+      ['@startuml\nSystem_Boundary(b, "B") { Person(p, "P") }\n@enduml', addBoundary({ parent: 'b' }), 'boundary-cannot-take-children'],
+      ['@startuml\nSystem_Boundary(b, "B")\n@enduml', addBoundary({ parent: 'b' }), 'boundary-cannot-take-children'],
+    ];
+    for (const [src, edit, code] of cases) {
+      let r: ReturnType<typeof applyC4Edit> | undefined;
+      expect(() => (r = applyC4Edit(src, edit))).not.toThrow();
+      expect(r).toMatchObject({ ok: false });
+      if (r && !r.ok) expect(r.code, `${code}: ${r.message}`).toBe(code);
+    }
+  });
+
+  it('rejects an unterminated top-level anchor as invalid-result', () => {
+    const src = '@startuml\nSystem_Boundary(b, "B") {\n  Person(p, "P")\n';
+    const r = applyC4Edit(src, addBoundary());
+    if (r.ok) {
+      // The parser may reject the source outright; otherwise the new block would nest.
+      throw new Error('expected a failure');
+    }
+    expect(['parse-error', 'invalid-result']).toContain(r.code);
+  });
+
+  it('keeps existing add-element/add-relationship results unchanged, plus insertedLines', () => {
+    const e = apply(BASIC, addPerson());
+    expect(e.insertedLines).toEqual([e.insertedLine]);
+    const rel = apply(BASIC, { kind: 'add-relationship', sourceId: 'user', targetId: 'app', label: 'Hi' });
+    expect(rel.insertedLines).toEqual([rel.insertedLine]);
   });
 });
