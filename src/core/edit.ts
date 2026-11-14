@@ -4,8 +4,9 @@
  * `applyC4Edit(source, edit)` returns new source text. An edit is always a
  * minimal *insertion* into the original text: one line (elements, relationships)
  * or one contiguous block (an empty boundary: opening line plus closing `}`),
- * inserted at a single point. No existing byte is changed, and the parsed model is never re-serialised (it is lossy — it drops
- * `Rel` technology, direction variants, comments and directives). The package
+ * inserted at a single point. No existing byte is changed, and the parsed model
+ * is never re-serialised (it is lossy — it drops `Rel` technology, direction
+ * variants, comments and directives). The package
  * never writes anywhere; the host applies the returned text.
  *
  * Pure and React-free.
