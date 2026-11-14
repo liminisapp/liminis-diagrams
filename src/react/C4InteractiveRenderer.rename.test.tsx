@@ -3,7 +3,7 @@ import { render, fireEvent, act } from '@testing-library/react';
 import { C4InteractiveRenderer } from './C4InteractiveRenderer';
 import { parseC4 } from '../core/parser';
 import { applyC4Edit, type C4Edit } from '../core/edit';
-import { LONG_PRESS_DELAY_MS, LONG_PRESS_MOVE_TOLERANCE } from './hooks/useC4LongPress';
+import { LONG_PRESS_DELAY_MS } from './hooks/useC4LongPress';
 
 /**
  * Rename gestures: double-click an element or a relationship label (on touch, the

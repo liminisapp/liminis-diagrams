@@ -308,7 +308,9 @@ export default function C4Playground({
             : positionCount > 0
               ? `${positionCount} positions held in memory`
               : 'laid out by dagre'}
-          {editable && isEditMode ? ' · double-click a label to rename' : ''}
+          {editable && isEditMode
+            ? ' · double-click a label to rename · drop onto a boundary to move in, ⌥-drag to move out (touch: tap, then Move out)'
+            : ''}
         </span>
         {editError && (
           <span className="c4-playground__edit-error" role="alert">
