@@ -3,6 +3,7 @@ import {
   generateC4Alias,
   isValidC4Alias,
   isC4AliasAvailable,
+  placeholderLabelFor,
   C4_ADDABLE_BOUNDARY_KINDS,
   C4_BOUNDARY_KIND_MACRO,
   C4_BOUNDARY_DEFAULT_LABELS,
@@ -84,5 +85,21 @@ describe('boundary kinds', () => {
   it('suffixes on collision, including with the fallback', () => {
     expect(generateC4Alias('???', ['boundary'], 'boundary')).toBe('boundary_2');
     expect(generateC4Alias('Core', ['core'], 'systemBoundary')).toBe('core_2');
+  });
+});
+
+describe('placeholderLabelFor', () => {
+  const el = (type: 'person' | 'system' | 'container' | 'component', properties = {}) => ({ type, properties });
+  it('names each kind', () => {
+    expect(placeholderLabelFor(el('person'))).toBe('Person');
+    expect(placeholderLabelFor(el('system'))).toBe('System');
+    expect(placeholderLabelFor(el('container', { external: true }))).toBe('Container');
+    expect(placeholderLabelFor(el('component'))).toBe('Component');
+  });
+  it('names shapes and boundaries', () => {
+    expect(placeholderLabelFor(el('container', { shape: 'cylinder' }))).toBe('Database');
+    expect(placeholderLabelFor(el('system', { shape: 'queue' }))).toBe('Queue');
+    expect(placeholderLabelFor(el('system', { style: 'boundary' }))).toBe('Boundary');
+    expect(placeholderLabelFor(el('container', { style: 'boundary' }))).toBe('Boundary');
   });
 });

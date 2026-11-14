@@ -2,11 +2,12 @@
  * Headless structural edits for C4-PlantUML source.
  *
  * `applyC4Edit(source, edit)` returns new source text. An edit is always a
- * minimal *insertion* into the original text: one line (elements, relationships)
- * or one contiguous block (an empty boundary: opening line plus closing `}`),
- * inserted at a single point. No existing byte is changed, and the parsed model
- * is never re-serialised (it is lossy — it drops `Rel` technology, direction
- * variants, comments and directives). The package
+ * minimal patch of the original text: adding is an *insertion* at a single point
+ * (one line for elements and relationships, one contiguous block for an empty
+ * boundary: opening line plus closing `}`) that changes no existing byte, and
+ * renaming splices the characters of exactly one label argument. The parsed
+ * model is never re-serialised (it is lossy — it drops `Rel` technology,
+ * direction variants, comments and directives). The package
  * never writes anywhere; the host applies the returned text.
  *
  * Pure and React-free.
@@ -20,12 +21,14 @@ import {
   generateC4Alias,
   isC4AliasAvailable,
   isValidC4Alias,
+  C4_DEFAULT_RELATIONSHIP_LABEL,
+  placeholderLabelFor,
   type C4AddableBoundaryKind,
   type C4AddableElementKind,
 } from './alias';
 import { parseC4WithSpans } from './parser';
 import { isBoundary } from './types';
-import type { C4SourceSpans, C4Diagram } from './types';
+import type { C4SourceSpans, C4Diagram, LabelRange } from './types';
 
 // =============================================================================
 // EDIT TYPES
@@ -81,10 +84,45 @@ export interface C4AddRelationshipEdit {
 }
 
 /**
- * A structural edit. A discriminated union on `kind`; further members (delete,
- * rename, re-parent, edit relationship) can be added without breaking callers.
+ * Identifies one relationship. Relationships have no alias, so the target is
+ * its index in `diagram.relationships` plus what the renderer saw there as a
+ * staleness guard: `applyC4Edit` re-parses the host's text and only proceeds if
+ * the relationship at `index` still has these endpoints and this label. A text
+ * that changed since render therefore fails (`stale-target`) rather than
+ * patching a different line.
  */
-export type C4Edit = C4AddElementEdit | C4AddBoundaryEdit | C4AddRelationshipEdit;
+export interface C4RelationshipTarget {
+  /** Index into `diagram.relationships` */
+  index: number;
+  sourceId: string;
+  targetId: string;
+  /** `C4Relationship.label` as parsed, i.e. `label [technology]` when it has one */
+  label: string;
+}
+
+/** What a rename applies to: an element (or boundary) by alias, or a relationship. */
+export type C4RenameTarget = { element: string } | { relationship: C4RelationshipTarget };
+
+/**
+ * Replace the label argument of one element, boundary or relationship. Only
+ * that argument's characters change; the alias never does, so manual positions
+ * keyed by alias stay valid. An empty label falls back to a placeholder.
+ */
+export interface C4RenameEdit {
+  kind: 'rename';
+  target: C4RenameTarget;
+  label: string;
+}
+
+/**
+ * A structural edit. A discriminated union on `kind`; further members (delete,
+ * re-parent, edit relationship) can be added without breaking callers.
+ */
+export type C4Edit =
+  | C4AddElementEdit
+  | C4AddBoundaryEdit
+  | C4AddRelationshipEdit
+  | C4RenameEdit;
 
 export type C4EditErrorCode =
   | 'parse-error'
@@ -94,6 +132,9 @@ export type C4EditErrorCode =
   | 'alias-collision'
   | 'invalid-alias'
   | 'self-relationship'
+  | 'unknown-element'
+  | 'stale-target'
+  | 'no-label-argument'
   | 'invalid-result';
 
 export type ApplyC4EditResult =
@@ -101,10 +142,15 @@ export type ApplyC4EditResult =
       ok: true;
       /**
        * The new source: the original with exactly one contiguous block inserted
-       * (one line, or two for `add-boundary`)
+       * (add: one line, or two for `add-boundary`), or with one label argument
+       * replaced (rename; unchanged if the label was)
        */
       source: string;
-      /** The first inserted line (without its line terminator): the opening line for a boundary */
+      /**
+       * The line as it now reads, without its line terminator: the first
+       * inserted line (add; the opening line for a boundary) or the patched
+       * line (rename)
+       */
       insertedLine: string;
       /** Every inserted line, in order (one for elements and relationships, two for a boundary) */
       insertedLines: string[];
@@ -258,6 +304,8 @@ export function applyC4Edit(source: string, edit: C4Edit): ApplyC4EditResult {
       return applyAddBoundary(doc, parsed.diagram, parsed.spans, edit);
     case 'add-relationship':
       return applyAddRelationship(doc, parsed.diagram, parsed.spans, edit);
+    case 'rename':
+      return applyRename(doc, parsed.diagram, parsed.spans, edit);
     default: {
       const never: never = edit;
       return fail('parse-error', `Unknown edit kind: ${(never as { kind?: string }).kind}`);
@@ -468,6 +516,115 @@ function applyAddRelationship(
     [line],
     label,
   );
+}
+
+// =============================================================================
+// RENAME
+// =============================================================================
+
+function unquoteArg(text: string): string {
+  const t = text.trim();
+  return t.startsWith('"') && t.endsWith('"') && t.length >= 2 ? t.slice(1, -1) : t;
+}
+
+function applyRename(
+  doc: Doc,
+  diagram: C4Diagram,
+  spans: C4SourceSpans,
+  edit: C4RenameEdit,
+): ApplyC4EditResult {
+  const { target } = edit;
+  let line: number;
+  let range: LabelRange | undefined;
+  let fallback: string;
+  let elementIndex = -1;
+  let relationshipIndex = -1;
+
+  if ('element' in target) {
+    elementIndex = diagram.elements.findIndex((e) => e.id === target.element);
+    if (elementIndex === -1) {
+      return fail('unknown-element', `'${target.element}' is not an element in this diagram`);
+    }
+    line = spans.elements[elementIndex].line;
+    range = spans.elements[elementIndex].labelRange;
+    fallback = placeholderLabelFor(diagram.elements[elementIndex]);
+  } else {
+    const t = target.relationship;
+    const rel = Number.isInteger(t.index) ? diagram.relationships[t.index] : undefined;
+    if (!rel || rel.sourceId !== t.sourceId || rel.targetId !== t.targetId || rel.label !== t.label) {
+      return fail(
+        'stale-target',
+        'The relationship at that position no longer matches the source; re-read it and try again',
+      );
+    }
+    relationshipIndex = t.index;
+    line = spans.relationships[relationshipIndex].line;
+    range = spans.relationships[relationshipIndex].labelRange;
+    fallback = C4_DEFAULT_RELATIONSHIP_LABEL;
+  }
+
+  if (!range) {
+    return fail('no-label-argument', 'That line has no plain label argument to replace');
+  }
+
+  const label = sanitizeC4Text(edit.label) || fallback;
+  const text = doc.lines[line];
+  const patched = text.slice(0, range.start) + quote(label) + text.slice(range.end);
+  if (label === unquoteArg(text.slice(range.start, range.end))) {
+    const unchanged = text.replace(/\r$/, '');
+    return { ok: true, source: doc.source, insertedLine: unchanged, insertedLines: [unchanged], label };
+  }
+
+  const at = doc.lineStarts[line];
+  const newSource =
+    doc.source.slice(0, at + range.start) + quote(label) + doc.source.slice(at + range.end);
+  return verifyRename(newSource, diagram, { elementIndex, relationshipIndex }, label, patched);
+}
+
+/**
+ * Re-parse a renamed source and check that nothing but the target's label moved:
+ * the same elements (ids, parents, properties) and relationships, in order.
+ */
+function verifyRename(
+  newSource: string,
+  before: C4Diagram,
+  which: { elementIndex: number; relationshipIndex: number },
+  label: string,
+  patchedLine: string,
+): ApplyC4EditResult {
+  const bad = () => fail('invalid-result', 'The rename could not be applied cleanly to this source');
+  const after = parseC4WithSpans(newSource);
+  if (!after.diagram || after.errors.length > 0) return bad();
+  const { elements, relationships } = after.diagram;
+  if (elements.length !== before.elements.length || relationships.length !== before.relationships.length) {
+    return bad();
+  }
+
+  for (let i = 0; i < elements.length; i++) {
+    const a = elements[i];
+    const b = before.elements[i];
+    const name = i === which.elementIndex ? label : b.name;
+    if (
+      a.id !== b.id ||
+      a.type !== b.type ||
+      a.parent !== b.parent ||
+      a.name !== name ||
+      JSON.stringify(a.properties) !== JSON.stringify(b.properties)
+    ) {
+      return bad();
+    }
+  }
+  for (let i = 0; i < relationships.length; i++) {
+    const a = relationships[i];
+    const b = before.relationships[i];
+    let expected = b.label;
+    if (i === which.relationshipIndex) expected = b.technology ? `${label} [${b.technology}]` : label;
+    if (a.sourceId !== b.sourceId || a.targetId !== b.targetId || a.technology !== b.technology || a.label !== expected) {
+      return bad();
+    }
+  }
+  const written = patchedLine.replace(/\r$/, '');
+  return { ok: true, source: newSource, insertedLine: written, insertedLines: [written], label };
 }
 
 /** What `verify` expects the edit to have added. */
