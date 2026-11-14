@@ -17,13 +17,35 @@
 
 import { useCallback, useEffect, useRef, useState, RefObject } from 'react';
 
+/**
+ * What the pointer was doing at the event that produced a drag callback. Passed
+ * as a trailing argument so existing `(nodeId, x, y)` callbacks keep working.
+ */
+export interface C4DragInfo {
+  /** The pointer in SVG coordinates (null when the SVG has no usable transform) */
+  point: { x: number; y: number } | null;
+  clientX: number;
+  clientY: number;
+  /** ⌥ (Alt) state of the event itself: for `onNodeDragEnd`, the state at release */
+  altKey: boolean;
+  /** 'mouse' | 'touch' | 'pen' (empty for a synthesised event) */
+  pointerType: string;
+}
+
 export interface UseC4DiagramDragProps {
   /** Reference to the SVG element */
   svgRef: RefObject<SVGSVGElement | null>;
   /** Callback fired during drag with new position */
-  onNodeDrag?: (nodeId: string, x: number, y: number) => void;
+  onNodeDrag?: (nodeId: string, x: number, y: number, info: C4DragInfo) => void;
   /** Callback fired when drag ends */
-  onNodeDragEnd?: (nodeId: string, x: number, y: number) => void;
+  onNodeDragEnd?: (nodeId: string, x: number, y: number, info: C4DragInfo) => void;
+  /**
+   * Opt in to cancel semantics. When supplied, `pointercancel` and Escape abandon
+   * the drag through this callback and `onNodeDragEnd` is not called. When absent
+   * a `pointercancel` still reports as an end (the long-standing behaviour) and
+   * Escape does nothing.
+   */
+  onNodeDragCancel?: (nodeId: string) => void;
   /** Whether drag interaction is enabled */
   enabled: boolean;
 }
@@ -55,6 +77,10 @@ export interface UseC4DiagramDragReturn {
   cancelDrag: () => void;
 }
 
+function infoOf(e: PointerEvent, point: { x: number; y: number } | null): C4DragInfo {
+  return { point, clientX: e.clientX, clientY: e.clientY, altKey: e.altKey, pointerType: e.pointerType };
+}
+
 /**
  * Hook for managing drag interactions on C4 diagram nodes.
  *
@@ -65,6 +91,7 @@ export function useC4DiagramDrag({
   svgRef,
   onNodeDrag,
   onNodeDragEnd,
+  onNodeDragCancel,
   enabled,
 }: UseC4DiagramDragProps): UseC4DiagramDragReturn {
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
@@ -93,6 +120,8 @@ export function useC4DiagramDrag({
   onNodeDragRef.current = onNodeDrag;
   const onNodeDragEndRef = useRef(onNodeDragEnd);
   onNodeDragEndRef.current = onNodeDragEnd;
+  const onNodeDragCancelRef = useRef(onNodeDragCancel);
+  onNodeDragCancelRef.current = onNodeDragCancel;
   const draggedNodeIdRef = useRef<string | null>(null);
 
   /**
@@ -184,7 +213,14 @@ export function useC4DiagramDrag({
       const newY = svgPoint.y - dragOffsetRef.current.y;
 
       lastPositionRef.current = { x: newX, y: newY };
-      onNodeDragRef.current?.(nodeId, newX, newY);
+      onNodeDragRef.current?.(nodeId, newX, newY, infoOf(e, svgPoint));
+    };
+
+    const finish = () => {
+      draggedNodeIdRef.current = null;
+      activePointerIdRef.current = null;
+      lockedCtmInverseRef.current = null;
+      setDraggedNodeId(null);
     };
 
     const endDrag = (e: PointerEvent) => {
@@ -193,15 +229,31 @@ export function useC4DiagramDrag({
       // A second finger lifting must not end the drag the first one owns.
       if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
 
+      if (e.type === 'pointercancel' && onNodeDragCancelRef.current) {
+        const cancel = onNodeDragCancelRef.current;
+        finish();
+        cancel(nodeId);
+        return;
+      }
+
+      // Read the pointer before the lock is released.
+      const info = infoOf(e, screenToSvgRef.current(e.clientX, e.clientY));
       onNodeDragEndRef.current?.(
         nodeId,
         lastPositionRef.current.x,
-        lastPositionRef.current.y
+        lastPositionRef.current.y,
+        info,
       );
-      draggedNodeIdRef.current = null;
-      activePointerIdRef.current = null;
-      lockedCtmInverseRef.current = null;
-      setDraggedNodeId(null);
+      finish();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const nodeId = draggedNodeIdRef.current;
+      const cancel = onNodeDragCancelRef.current;
+      if (!nodeId || !cancel) return;
+      finish();
+      cancel(nodeId);
     };
 
     window.addEventListener('pointermove', handlePointerMove);
@@ -210,11 +262,13 @@ export function useC4DiagramDrag({
     // the pointer is otherwise lost. Without it a touch drag can end with no
     // `pointerup` at all, leaving the node stuck to the finger.
     window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', endDrag);
       window.removeEventListener('pointercancel', endDrag);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [draggedNodeId]);
 

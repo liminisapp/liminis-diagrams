@@ -43,8 +43,10 @@ dragging from an element's handle to another adds a `Rel` (label it inline, "Use
 has a separate **Boundaries** group that adds an empty boundary you can then right-click into
 and fill. Each is reported to the host as a small insertion into the source (one line, or a
 two-line block for a boundary), which `applyC4Edit` produces. Double-clicking
-an element, or a relationship's label (long-press on touch), opens the label for **renaming**; only that
-label argument changes in the source —
+an element (on touch: tap it, then Rename), or a relationship's label (long-press on touch), opens the label for **renaming**; only that
+label argument changes in the source. **Dropping** an element or boundary on another boundary moves it in,
+and **⌥-dragging** a child out (on touch: tap it, then Move out) lifts it to the top level or into the boundary
+you drop it on; the source line, or the boundary's whole block, moves and nothing else changes —
 see [Recipe 4](../recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities).
 The playground below is built from the published package, so it does not offer these yet.
 

@@ -370,6 +370,60 @@ describe('C4Playground structural editing', () => {
     expect(source()).toContain('Rel_D(user, api, "Two", "HTTPS")');
   });
 
+  /** Press on the middle of `id`, drag to a point, release (⌥ held at release when `alt`). */
+  function dragNode(c: HTMLElement, id: string, to: { x: number; y: number }, alt = false) {
+    const r = c.querySelector(`[data-node-id="${id}"]`)!;
+    const from = {
+      x: Number(r.getAttribute('x')) + Number(r.getAttribute('width')) / 2,
+      y: Number(r.getAttribute('y')) + Number(r.getAttribute('height')) / 2,
+    };
+    fireEvent.pointerDown(r, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: from.x, clientY: from.y });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: to.x, clientY: to.y, altKey: alt });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: to.x, clientY: to.y, altKey: alt });
+  }
+
+  it('moves an element into a boundary by dropping it there: only that line moves, re-indented', () => {
+    const { c, source, rects } = setup();
+    const b = c.querySelector('[data-node-id="b"]')!;
+    const to = {
+      x: Number(b.getAttribute('x')) + Number(b.getAttribute('width')) - 20,
+      y: Number(b.getAttribute('y')) + Number(b.getAttribute('height')) - 20,
+    };
+    dragNode(c, 'ext', to);
+    expect(source()).toBe(
+      [
+        "' people",
+        'Person(user, "User")',
+        'System_Boundary(b, "Backend") {',
+        '  Container(api, "API", "Go")',
+        '  System(ext, "Ext")',
+        '}',
+        'Rel_D(user, api, "Uses", "HTTPS")',
+      ].join('\n'),
+    );
+    expect(rects().ext).toBeDefined();
+  });
+
+  it('moves a child out to the top level with ⌥-drag, keeping every other position', () => {
+    const { c, source, rects } = setup();
+    const before = rects();
+    dragNode(c, 'api', { x: 5000, y: 5000 }, true);
+    expect(source()).toBe(
+      [
+        "' people",
+        'Person(user, "User")',
+        'System_Boundary(b, "Backend") {',
+        '}',
+        'System(ext, "Ext")',
+        'Container(api, "API", "Go")',
+        'Rel_D(user, api, "Uses", "HTTPS")',
+      ].join('\n'),
+    );
+    const after = rects();
+    for (const id of ['user', 'ext']) expect(after[id]).toEqual(before[id]);
+    expect(after.api).not.toEqual(before.api);
+  });
+
   it('shows the reason when an edit cannot be applied, and changes nothing', () => {
     cleanup();
     measureAs(800, 600);

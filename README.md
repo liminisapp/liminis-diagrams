@@ -92,7 +92,7 @@ Pass `onEdit` as well (and keep `isEditMode` on) and the renderer offers a right
 an element, or an empty boundary (a separate group in the same menu) that you can then add
 elements into, and a handle on each element to drag a relationship to another one. It
 **reports** each as an edit; it never changes your source. `applyC4Edit` turns the edit
-into new source text — exactly one inserted block (one line, or two for a boundary) or, for a rename, one replaced label, nothing else touched — and you store it:
+into new source text — exactly one inserted block (one line, or two for a boundary), one replaced label for a rename, or one moved block for a re-parent, nothing else touched — and you store it:
 
 ```tsx
 import { applyC4Edit } from '@liminis/diagrams/core';
@@ -112,11 +112,25 @@ import { applyC4Edit } from '@liminis/diagrams/core';
 />
 ```
 
-The same callback reports a **rename**: double-click an element, or a relationship's label
-(long-press on touch), edit the label inline, and `onEdit` receives
+The same callback reports a **rename**: double-click an element (on touch: tap it, then
+**Rename** in the bar that appears), or double-click a relationship's label (long-press on
+touch), edit the label inline, and `onEdit` receives
 `{ kind: 'rename', target, label }`. `applyC4Edit` replaces only that label argument — the
 alias, description, technology, `Rel_D`-style variant and trailing comment stay byte-identical,
 so manual positions keep matching.
+
+It also reports a **re-parent**, which changes which boundary an element belongs to without
+leaving the diagram. **Drop** an element (or a whole boundary) on another boundary to move it
+in; the boundary that would receive it is highlighted while you drag. **Hold ⌥ (Alt)** while
+dragging a child to lift it out of its boundary: onto empty canvas it goes to the top level,
+onto another boundary it goes in there. On touch, tap an element (or a nested boundary) and
+choose **Move out** in the bar. `onEdit` receives `{ kind: 'reparent', id, parent? }` (no
+`parent` means the top level). `applyC4Edit` moves that one line, or the boundary's whole
+`{ … }` block with its children, to the end of the destination block, re-indented to match
+its siblings; every other line is byte-identical and no alias changes, so relationships and
+manual positions survive. Moving a boundary into itself or one of its own descendants is
+refused with `move-into-self`. A re-parent drop calls `onEdit` and **not** `onPositionChange`:
+store `context.positions` as for every other edit.
 
 See [Recipe 4](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities)
 for the host's responsibilities. Available from the release after 0.1.6.
