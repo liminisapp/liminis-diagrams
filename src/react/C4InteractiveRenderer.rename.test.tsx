@@ -6,8 +6,8 @@ import { applyC4Edit, type C4Edit } from '../core/edit';
 import { LONG_PRESS_DELAY_MS, LONG_PRESS_MOVE_TOLERANCE } from './hooks/useC4LongPress';
 
 /**
- * Rename gestures: double-click (and, on touch, long-press) an element or a
- * relationship label, confirm inline, and the renderer reports one `rename`.
+ * Rename gestures: double-click an element or a relationship label (on touch, the
+ * action bar's Rename for an element, long-press for a relationship label), confirm inline, and the renderer reports one `rename`.
  *
  * As elsewhere, happy-dom has no SVG geometry, so the CTM is stubbed as identity.
  */
@@ -265,7 +265,7 @@ describe('rename a relationship: double-click', () => {
   });
 });
 
-describe('rename: long-press on touch', () => {
+describe('rename: long-press on touch (relationship labels; elements no longer)', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
@@ -274,32 +274,27 @@ describe('rename: long-press on touch', () => {
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   };
 
-  it('opens the input on an element after ~500 ms, and releasing reports no positions', () => {
-    const { container, onEdit, onPositionChange } = setup();
+  it('does not rename an element on a long-press: it is not a long-press target', () => {
+    const { container, onEdit } = setup();
     const p = centre(container, 'ext');
     pressDown(container, p, node(container, 'ext'));
-    hold(LONG_PRESS_DELAY_MS - 1);
+    hold(LONG_PRESS_DELAY_MS * 3);
     expect(input(container)).toBeNull();
-    hold(1);
-    expect(input(container)!.value).toBe('Ext');
     expect(menuOf(container)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
     fireEvent.pointerUp(window, { pointerId: 1, clientX: p.x, clientY: p.y });
-    hold(100);
-    expect(onPositionChange).not.toHaveBeenCalled();
-    type(container, 'Renamed');
-    expect(onEdit).toHaveBeenCalledTimes(1);
-    expect(onEdit.mock.calls[0][0]).toEqual({ kind: 'rename', target: { element: 'ext' }, label: 'Renamed' });
+    expect(onEdit).not.toHaveBeenCalled();
   });
 
-  it('abandons the move-drag it started: a later move reports nothing', () => {
+  it('press, pause and drag moves the element and never starts a rename', () => {
     const { container, onPositionChange } = setup();
     const p = centre(container, 'ext');
     pressDown(container, p, node(container, 'ext'));
-    hold();
-    fireEvent.pointerMove(window, { pointerId: 1, clientX: p.x + 40, clientY: p.y + 40 });
-    fireEvent.pointerUp(window, { pointerId: 1, clientX: p.x + 40, clientY: p.y + 40 });
-    hold(100);
-    expect(onPositionChange).not.toHaveBeenCalled();
+    hold(LONG_PRESS_DELAY_MS + 200);
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: p.x + 60, clientY: p.y + 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: 'touch', clientX: p.x + 60, clientY: p.y + 60 });
+    expect(input(container)).toBeNull();
+    expect(onPositionChange).toHaveBeenCalledTimes(1);
   });
 
   it('opens on a relationship label', () => {
@@ -309,20 +304,6 @@ describe('rename: long-press on touch', () => {
     expect(input(container)!.value).toBe('Uses');
     expect(input(container)!.getAttribute('aria-label')).toBe('Relationship label');
     expect(menuOf(container)).toBeNull();
-  });
-
-  it.each([
-    ['movement past the tolerance', () => fireEvent.pointerMove(window, { pointerId: 1, clientX: 400 + LONG_PRESS_MOVE_TOLERANCE + 5, clientY: 400 })],
-    ['an early release', () => fireEvent.pointerUp(window, { pointerId: 1 })],
-    ['pointercancel', () => fireEvent.pointerCancel(window, { pointerId: 1 })],
-  ])('is abandoned by %s on an element', (_name, abandon) => {
-    const { container, onEdit } = setup();
-    pressDown(container, { x: 400, y: 400 }, node(container, 'ext'));
-    abandon();
-    hold(1000);
-    expect(input(container)).toBeNull();
-    expect(onEdit).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('is abandoned the same way on a relationship label', () => {

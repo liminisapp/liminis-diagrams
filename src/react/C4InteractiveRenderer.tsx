@@ -31,7 +31,8 @@ import { useC4DiagramDrag, type C4DragInfo } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import { findBoundaryAt, findElementAt } from './hit-test';
 import { clampIntoBoundary, decideReparent, findDropTarget } from './reparent-drop';
-import { useC4LongPress } from './hooks/useC4LongPress';
+import { LONG_PRESS_MOVE_TOLERANCE, useC4LongPress } from './hooks/useC4LongPress';
+import { ActionBar } from './ActionBar';
 import { EditMenu, type EditMenuChoice } from './EditMenu';
 import { LabelInput } from './LabelInput';
 
@@ -264,6 +265,11 @@ export function C4InteractiveRenderer({
   // Label being renamed in place; likewise nothing is reported until confirmed.
   const [renaming, setRenaming] = useState<RenameState | null>(null);
 
+  // The node tapped on touch: it shows the action bar (Rename, Move out). Transient UI state,
+  // never reported to the host.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Where the press in flight began, to tell a tap from a drag.
+  const dragStartClientRef = useRef<{ x: number; y: number } | null>(null);
   // Boundary that would receive the current drag if released now (highlighted).
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // Layout as it was when the drag began. Drop targets are found against this, not the
@@ -419,6 +425,36 @@ export function C4InteractiveRenderer({
       rafRef.current = null;
     }
 
+    // A touch or pen tap (the pointer barely moved) selects the node; it is not a drag, so no
+    // positions are reported. A mouse click keeps reporting as before.
+    const pressedAt = dragStartClientRef.current;
+    dragStartClientRef.current = null;
+    if (
+      canEdit &&
+      info &&
+      pressedAt &&
+      (info.pointerType === 'touch' || info.pointerType === 'pen') &&
+      nodeId !== LEGEND_POSITION_ID &&
+      Math.hypot(info.clientX - pressedAt.x, info.clientY - pressedAt.y) <= LONG_PRESS_MOVE_TOLERANCE
+    ) {
+      // Drop the jitter the drag preview may have applied within the tolerance.
+      if (dragStartPosRef.current !== null) {
+        dragPositionsRef.current = {};
+        setDragPositions({});
+      }
+      pendingDragRef.current = null;
+      dragStartPosRef.current = null;
+      dragStartPositionsRef.current = {};
+      dragSnapshotRef.current = null;
+      dragMovedRef.current = false;
+      setDropTarget(null);
+      const node = layout.nodes.find((n) => n.id === nodeId);
+      // Something to offer: Rename for an element, Move out for anything nested.
+      const hasActions = node !== undefined && (!isBoundary(node.element) || node.element.parent !== undefined);
+      setSelectedId(hasActions ? nodeId : null);
+      return;
+    }
+
     // Dropped over a different boundary, or ⌥-dragged out of its own: a re-parent. Decided at
     // release, against the pre-drag layout, so a child left outside its boundary is found there.
     const snapshot = dragSnapshotRef.current;
@@ -491,7 +527,7 @@ export function C4InteractiveRenderer({
     // manualPositions catches up.
     dragStartPosRef.current = null;
     dragStartPositionsRef.current = {};
-  }, [canEdit, diagram.elements, manualPositions, autoLayout.nodes, onPositionChange, onEdit, applyDragWithChildren]);
+  }, [canEdit, diagram.elements, layout.nodes, manualPositions, autoLayout.nodes, onPositionChange, onEdit, applyDragWithChildren]);
 
   /** Drop every trace of a drag in flight without reporting it. */
   const resetDragState = useCallback(() => {
@@ -506,6 +542,7 @@ export function C4InteractiveRenderer({
     dragStartPositionsRef.current = {};
     dragSnapshotRef.current = null;
     dragMovedRef.current = false;
+    dragStartClientRef.current = null;
     setDropTarget(null);
   }, []);
 
@@ -570,6 +607,7 @@ export function C4InteractiveRenderer({
       if (canEdit && draggedNodeIdRef.current === null) {
         dragSnapshotRef.current = layout.nodes;
         dragMovedRef.current = false;
+        dragStartClientRef.current = { x: e.clientX, y: e.clientY };
       }
       startNodeDrag(nodeId, nodeX, nodeY, e);
     },
@@ -584,8 +622,25 @@ export function C4InteractiveRenderer({
       setPendingRel(null);
       setRenaming(null);
       setDropTarget(null);
+      setSelectedId(null);
     }
   }, [canEdit]);
+
+  // The selected alias vanishing (the diagram changed under it) clears the selection.
+  useEffect(() => {
+    if (selectedId !== null && !diagram.elements.some((e) => e.id === selectedId)) setSelectedId(null);
+  }, [diagram.elements, selectedId]);
+
+  // Escape deselects. Listening only while something is selected keeps it out of the way of
+  // the label inputs, the menu and a drag, which each handle their own Escape.
+  useEffect(() => {
+    if (selectedId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedId]);
 
   // No window-level pointercancel here on purpose. Once the element is placed no
   // gesture is in flight, so a cancel from an unrelated pointer (a palm, a system
@@ -602,6 +657,7 @@ export function C4InteractiveRenderer({
       pt.x = clientX;
       pt.y = clientY;
       const p = pt.matrixTransform(ctm.inverse());
+      setSelectedId(null);
       const next: MenuState = { x: p.x, y: p.y, pointerId };
       const parent = findBoundaryAt(layout.nodes, p)?.id;
       if (parent !== undefined) next.parent = parent;
@@ -647,13 +703,12 @@ export function C4InteractiveRenderer({
     [resolvePressTarget],
   );
 
-  // `afterAbort`: a long-press has just dropped the move-drag it started, but the
-  // ref mirror only catches up on the next render, so that guard must be skipped.
-  const startRenameElement = (id: string, afterAbort = false) => {
+  const startRenameElement = (id: string) => {
     if (!canEdit || busyRef.current || connectSourceId !== null) return;
-    if (!afterAbort && draggedNodeIdRef.current !== null) return;
+    if (draggedNodeIdRef.current !== null) return;
     const node = layout.nodes.find((n) => n.id === id);
     if (!node || isBoundary(node.element)) return;
+    setSelectedId(null);
     setRenaming({
       kind: 'element',
       id,
@@ -672,6 +727,7 @@ export function C4InteractiveRenderer({
     const rel = diagram.relationships[index];
     const edge = layout.edges.find((e) => e.relationshipIndex === index);
     if (!rel || !edge || edge.points.length < 2) return;
+    setSelectedId(null);
     const first = edge.points[0];
     const last = edge.points[edge.points.length - 1];
     setRenaming({
@@ -711,8 +767,13 @@ export function C4InteractiveRenderer({
     shouldStart: (e) => {
       pressTargetRef.current = null;
       if (draggedNodeIdRef.current !== null || busyRef.current) return false;
-      pressTargetRef.current = resolvePressTarget(e.target, e.clientX, e.clientY);
-      return pressTargetRef.current !== null;
+      const press = resolvePressTarget(e.target, e.clientX, e.clientY);
+      // A press on an element is the start of a move-drag, and a pause before moving must not
+      // turn it into a rename: touch renames from the action bar. Boundaries, empty canvas and
+      // relationship labels keep their long-press.
+      if (press?.kind === 'element') return false;
+      pressTargetRef.current = press;
+      return press !== null;
     },
     onLongPress: ({ clientX, clientY, pointerId }) => {
       const press = pressTargetRef.current;
@@ -723,11 +784,30 @@ export function C4InteractiveRenderer({
       // its preview without reporting it, so releasing the finger writes no
       // positions to the host.
       abortMoveDrag();
-      if (press.kind === 'element') startRenameElement(press.id, true);
-      else if (press.kind === 'relationship') startRenameRelationship(press.index, true);
+      if (press.kind === 'relationship') startRenameRelationship(press.index, true);
       else openMenuAt(clientX, clientY, pointerId);
     },
   });
+
+  const handleActionRename = () => {
+    if (selectedId !== null) startRenameElement(selectedId);
+  };
+
+  const handleActionMoveOut = () => {
+    const id = selectedId;
+    setSelectedId(null);
+    if (id === null || !canEdit) return;
+    if (!diagram.elements.find((e) => e.id === id)?.parent) return;
+    // Nothing moves on the canvas: every position is pinned as it is, and the item goes to the top level.
+    onEdit?.({ kind: 'reparent', id }, { positions: buildPositions() });
+  };
+
+  // Any press on the canvas (a drag, a connect handle, a long-press) deselects, so the bar is
+  // never stale; a tap on a node selects it again when it is released.
+  const handlePointerDownCapture = (e: React.PointerEvent) => {
+    setSelectedId(null);
+    onLongPressPointerDown(e);
+  };
 
   const handleContextMenu = (e: React.MouseEvent) => {
     // Edit mode only, and only where the menu exists: a read-only render, and a
@@ -843,7 +923,10 @@ export function C4InteractiveRenderer({
               connectSourceId,
               connectPointer,
               dropTarget,
-              onLongPressPointerDown,
+              selectedId,
+              onLongPressPointerDown: handlePointerDownCapture,
+              onActionRename: handleActionRename,
+              onActionMoveOut: handleActionMoveOut,
               onContextMenu: handleContextMenu,
               onSelectKind: handleSelectKind,
               onCloseMenu: () => setMenu(null),
@@ -891,7 +974,10 @@ interface EditingProps {
   connectSourceId: string | null;
   connectPointer: Point | null;
   dropTarget: DropTarget | null;
+  selectedId: string | null;
   onLongPressPointerDown: (e: React.PointerEvent) => void;
+  onActionRename: () => void;
+  onActionMoveOut: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onSelectKind: (choice: EditMenuChoice) => void;
   onCloseMenu: () => void;
@@ -1008,6 +1094,9 @@ function C4InteractiveSvg({
     () => new Set(layout.nodes.filter((n) => !isBoundary(n.element)).map((n) => n.id)),
     [layout.nodes],
   );
+  const selectedNode = editing?.selectedId
+    ? layout.nodes.find((n) => n.id === editing.selectedId)
+    : undefined;
   const pendingRelNodes = editing?.pendingRel
     ? {
         source: layout.nodes.find((n) => n.id === editing.pendingRel!.sourceId),
@@ -1228,6 +1317,22 @@ function C4InteractiveSvg({
           />
         )}
 
+        {/* Ring around the tap-selected node, so it is clear what the action bar acts on */}
+        {selectedNode && (
+          <rect
+            data-selected={selectedNode.id}
+            x={selectedNode.x}
+            y={selectedNode.y}
+            width={selectedNode.width}
+            height={selectedNode.height}
+            fill="none"
+            stroke={accent}
+            strokeWidth={2}
+            rx={6}
+            style={{ pointerEvents: 'none' }}
+          />
+        )}
+
         {/* Ghost of an element waiting for its label; not in the source yet */}
         {editing?.pending && (
           <rect
@@ -1272,6 +1377,18 @@ function C4InteractiveSvg({
           the SVG's origin. */}
       <div style={{ position: 'relative' }}>
         {svgElement}
+        {selectedNode && gesturesIdle && editing.dropTarget === null && draggedNodeId === null && (
+          <ActionBar
+            // Below the node, clear of the finger that tapped it.
+            left={(selectedNode.x - layout.viewBoxX) * scale}
+            top={(selectedNode.y + selectedNode.height - layout.viewBoxY) * scale + 8}
+            isDarkMode={isDarkMode}
+            canRename={!isBoundary(selectedNode.element)}
+            canMoveOut={selectedNode.element.parent !== undefined}
+            onRename={editing.onActionRename}
+            onMoveOut={editing.onActionMoveOut}
+          />
+        )}
         {editing.menu && (
           <EditMenu
             // Offset from the point so a finger that opened it is not under an item.
