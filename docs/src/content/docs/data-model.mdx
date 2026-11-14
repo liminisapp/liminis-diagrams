@@ -108,7 +108,9 @@ interface RelationshipSpan { line: number; parent?: string }
 ```
 
 `closeLine` is absent for a boundary written without braces, as a single-line `{ }`, or
-never closed — exactly the shapes that cannot take a new child by pure insertion.
+never closed — exactly the shapes that cannot take a new child by pure insertion. A
+boundary that `add-boundary` inserts always has a `closeLine` (on the line right after its
+opening line), which is what lets `add-element` target it straight away.
 `applyC4Edit` uses these spans; you rarely need them yourself.
 
 ## `LayoutResult`

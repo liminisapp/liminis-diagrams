@@ -105,9 +105,13 @@ technology, and a fourth argument would be description.
 `C4InteractiveRenderer`'s add-element menu (and `applyC4Edit`'s `add-element` edit,
 from the release after 0.1.6) writes `Person`, `System`, `Container`, `Component` and the
 `Db` variants of the last three (`SystemDb`, `ContainerDb`, `ComponentDb`). `_Ext`,
-`Queue`, boundaries and deployment nodes are not offered: write them in the source.
-C4 nesting rules are not enforced — an element can be added in any boundary, which is
-what the parser accepts. A new element is written in the minimal argument form,
+`Queue` and deployment nodes are not offered: write them in the source. Empty boundaries
+can be added too, through the menu's separate Boundaries group and `applyC4Edit`'s
+`add-boundary` edit: `System_Boundary`, `Container_Boundary` and `Boundary`
+(`Enterprise_Boundary` is not offered). A boundary is written as an opening line
+`Container_Boundary(alias, "Label") {` and a closing `}`, inserted together.
+C4 nesting rules are not enforced — an element or boundary can be added in any boundary,
+which is what the parser accepts. A new element is written in the minimal argument form,
 `System(alias, "Label")`, or with a technology and description if given.
 
 **Labels written by an edit** are single-line and safe to read back: `"` is written as

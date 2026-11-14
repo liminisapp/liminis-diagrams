@@ -125,6 +125,8 @@ package can make the right behaviour easy, but it cannot impose it.
 2. **Which kinds can be added?** There are four types, each with `_Ext`, `Db` and `Queue`
    variants, plus boundaries and deployment nodes. A first cut could offer Person, System,
    Container and Component, plus the `Db` variant, and leave everything else to the source.
+   *Answered for boundaries by #95 (ADR-95): `System_Boundary`, `Container_Boundary` and
+   `Boundary` can be added, as an empty two-line block, from a separate menu group.*
 3. **Should C4 nesting rules be enforced?** For example, Components only inside a
    `Container_Boundary`. The parser does not enforce them today. The UI could warn, block, or
    stay out of it.
