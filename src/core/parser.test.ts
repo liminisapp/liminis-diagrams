@@ -521,18 +521,21 @@ describe('parseC4WithSpans', () => {
     const src = `@startuml\nPerson(u, "U")\nSystem_Boundary(b, "B") {\n  System(s, "S")\n  Rel(s, s, "x")\n}\nRel(u, s, "y")\n@enduml`;
     const { diagram, spans } = parseC4WithSpans(src);
     expect(diagram!.elements.map((e) => e.id)).toEqual(['u', 'b', 's']);
-    expect(spans.elements).toEqual([
+    expect(spans.elements.map(({ line, closeLine, parent }) => ({ line, closeLine, parent }))).toEqual([
       { line: 1 },
       { line: 2, closeLine: 5 },
       { line: 3, parent: 'b' },
     ]);
-    expect(spans.relationships).toEqual([{ line: 4, parent: 'b' }, { line: 6 }]);
+    expect(spans.relationships.map(({ line, parent }) => ({ line, parent }))).toEqual([
+      { line: 4, parent: 'b' },
+      { line: 6 },
+    ]);
   });
 
   it('gives no closeLine to an unterminated block, a single-line block or a brace-less boundary', () => {
-    expect(parseC4WithSpans('System_Boundary(a, "A") {\nSystem(s, "S")').spans.elements[0]).toEqual({ line: 0 });
-    expect(parseC4WithSpans('System_Boundary(a, "A") { }').spans.elements[0]).toEqual({ line: 0 });
-    expect(parseC4WithSpans('System_Boundary(a, "A")').spans.elements[0]).toEqual({ line: 0 });
+    expect(parseC4WithSpans('System_Boundary(a, "A") {\nSystem(s, "S")').spans.elements[0].closeLine).toBeUndefined();
+    expect(parseC4WithSpans('System_Boundary(a, "A") { }').spans.elements[0].closeLine).toBeUndefined();
+    expect(parseC4WithSpans('System_Boundary(a, "A")').spans.elements[0].closeLine).toBeUndefined();
   });
 });
 
@@ -554,5 +557,69 @@ describe('quote-aware parsing (round-trip safety for inserted labels)', () => {
     const r = parseC4('System_Boundary(b, "B {x}") {\n  System(s, "S")\n}');
     expect(r.errors).toEqual([]);
     expect(r.diagram!.elements.find((e) => e.id === 's')!.parent).toBe('b');
+  });
+});
+
+describe('label ranges and relationship technology', () => {
+  /** The text a span's labelRange covers on the given source line. */
+  const covered = (src: string, line: number, range?: { start: number; end: number }) =>
+    range ? src.split('\n')[line].slice(range.start, range.end) : undefined;
+
+  it('covers the label argument of every element macro family', () => {
+    const macros = [
+      'Person', 'Person_Ext', 'System', 'SystemDb', 'SystemQueue_Ext', 'Container', 'ContainerDb_Ext',
+      'ComponentQueue', 'System_Boundary', 'Deployment_Node', 'InfrastructureNode',
+    ];
+    for (const m of macros) {
+      const src = `${m}(a, "Label, (x)", "d", "e") ' note`;
+      const { spans, errors } = parseC4WithSpans(src);
+      expect(errors).toEqual([]);
+      expect(covered(src, 0, spans.elements[0].labelRange)).toBe('"Label, (x)"');
+    }
+  });
+
+  it('covers the label argument of Rel, Rel_*, and BiRel lines, including indentation', () => {
+    for (const m of ['Rel', 'Rel_D', 'Rel_Back', 'BiRel', 'BiRel_L']) {
+      const src = `Person(a, "A")\nSystem(b, "B")\n\t  ${m}(a, b, "Uses", "HTTPS") ' Uses`;
+      const { spans } = parseC4WithSpans(src);
+      expect(covered(src, 2, spans.relationships[0].labelRange)).toBe('"Uses"');
+    }
+  });
+
+  it('handles odd spacing, an empty label, an unquoted label and a CR line ending', () => {
+    let src = 'Person( a ,  "A"  , "d" )\r\nRel( a ,b , "x" )\r\nRel(a, b, "")\nRel(a, b,   Uses HTTP  )';
+    const { spans } = parseC4WithSpans(src);
+    expect(covered(src, 0, spans.elements[0].labelRange)).toBe('"A"');
+    expect(covered(src, 1, spans.relationships[0].labelRange)).toBe('"x"');
+    expect(covered(src, 2, spans.relationships[1].labelRange)).toBe('""');
+    expect(covered(src, 3, spans.relationships[2].labelRange)).toBe('Uses HTTP');
+    src = 'Person(a)';
+    expect(parseC4WithSpans(src).spans.elements[0].labelRange).toBeUndefined();
+  });
+
+  it('indexes arguments the way the parser does: empty arguments are dropped', () => {
+    const src = 'Rel(a, b, , "x")';
+    const { diagram, spans } = parseC4WithSpans(src);
+    expect(diagram!.relationships[0].label).toBe('x');
+    expect(covered(src, 0, spans.relationships[0].labelRange)).toBe('"x"');
+  });
+
+  it('is not fooled by the label text appearing elsewhere on the line', () => {
+    const src = 'Container(Web, "Web", "Web", "Web") \' Web';
+    const { spans } = parseC4WithSpans(src);
+    expect(spans.elements[0].labelRange).toEqual({ start: 15, end: 20 });
+  });
+
+  it('gives no range to a $named label argument', () => {
+    const { spans } = parseC4WithSpans('Person(a, $tags="x")\nRel(a, a, $tags="y")');
+    expect(spans.elements[0].labelRange).toBeUndefined();
+    expect(spans.relationships[0].labelRange).toBeUndefined();
+  });
+
+  it('records technology on a relationship only when it is non-empty', () => {
+    const { diagram } = parseC4WithSpans('Rel(a, b, "Uses", "HTTPS")\nRel(a, b, "Uses", "")\nRel(a, b, "Uses")');
+    expect(diagram!.relationships[0]).toEqual({ sourceId: 'a', targetId: 'b', label: 'Uses [HTTPS]', technology: 'HTTPS' });
+    expect('technology' in diagram!.relationships[1]).toBe(false);
+    expect('technology' in diagram!.relationships[2]).toBe(false);
   });
 });

@@ -18,6 +18,7 @@ import type {
   C4Shape,
   C4SourceSpans,
   ElementSpan,
+  LabelRange,
   ParseError,
   ParseResult,
   ParseResultWithSpans,
@@ -171,6 +172,13 @@ export function validateC4(diagram: C4Diagram): ParseError[] {
   return errors;
 }
 
+/** One macro argument: its trimmed text and where it sits in the scanned line. */
+interface ParsedArg {
+  text: string;
+  start: number;
+  end: number;
+}
+
 class C4PlantUMLParser {
   private lines: string[];
   private lineNum: number = 0;
@@ -295,11 +303,12 @@ class C4PlantUMLParser {
     const startLine = this.lineNum;
 
     // Extract arguments from parentheses
-    const args = this.extractArgs(line, currentLine);
-    if (args === null) {
+    const parsedArgs = this.extractArgs(line, currentLine);
+    if (parsedArgs === null) {
       this.lineNum++;
       return;
     }
+    const args = parsedArgs.map((a) => a.text);
 
     // First arg is always the alias (unquoted identifier)
     const alias = args[0]?.replace(/^"|"$/g, '');
@@ -354,6 +363,8 @@ class C4PlantUMLParser {
     this.elements.push(element);
     const span: ElementSpan = { line: startLine };
     if (parentId !== undefined) span.parent = parentId;
+    const labelRange = this.labelRangeOf(parsedArgs[1], this.lines[startLine]);
+    if (labelRange) span.labelRange = labelRange;
     this.elementSpans.push(span);
 
     // A boundary opens a block with a '{' (outside quotes) and no '}' on the line.
@@ -383,8 +394,9 @@ class C4PlantUMLParser {
   private parseRelMacro(line: string, parentId: string | undefined): void {
     const startLine = this.lineNum;
     const currentLine = this.lineNum + 1;
-    const args = this.extractArgs(line, currentLine);
-    if (args === null) return;
+    const parsedArgs = this.extractArgs(line, currentLine);
+    if (parsedArgs === null) return;
+    const args = parsedArgs.map((a) => a.text);
 
     if (args.length < 3) {
       this.errors.push({
@@ -402,21 +414,26 @@ class C4PlantUMLParser {
 
     const fullLabel = tech ? `${label} [${tech}]` : label;
 
-    this.relationships.push({
+    const relationship: C4Relationship = {
       sourceId,
       targetId,
       label: fullLabel,
-    });
+    };
+    if (tech) relationship.technology = tech;
+    this.relationships.push(relationship);
     const span: RelationshipSpan = { line: startLine };
     if (parentId !== undefined) span.parent = parentId;
+    const labelRange = this.labelRangeOf(parsedArgs[2], this.lines[startLine]);
+    if (labelRange) span.labelRange = labelRange;
     this.relationshipSpans.push(span);
   }
 
   /**
    * Extract comma-separated arguments from a macro call.
-   * Handles quoted strings with commas inside them.
+   * Handles quoted strings with commas inside them. Each argument carries its
+   * character range within `line`.
    */
-  private extractArgs(line: string, lineNum: number): string[] | null {
+  private extractArgs(line: string, lineNum: number): ParsedArg[] | null {
     // Find opening paren
     const openIdx = line.indexOf('(');
     if (openIdx === -1) {
@@ -461,47 +478,66 @@ class C4PlantUMLParser {
     }
 
     const inner = line.slice(openIdx + 1, closeIdx);
-    return this.splitArgs(inner);
+    return this.splitArgs(inner, openIdx + 1);
   }
 
   /**
    * Split a comma-separated argument string, respecting quoted strings.
+   * Empty arguments are dropped. `base` is the offset of `inner` within the
+   * line, so each argument's `start`/`end` are line offsets of its trimmed text.
    */
-  private splitArgs(inner: string): string[] {
-    const args: string[] = [];
-    let current = '';
+  private splitArgs(inner: string, base: number): ParsedArg[] {
+    const args: ParsedArg[] = [];
     let inQuote = false;
     let escaped = false;
+    let chunkStart = 0;
 
-    for (const char of inner) {
+    const flush = (chunkEnd: number) => {
+      const chunk = inner.slice(chunkStart, chunkEnd);
+      const text = chunk.trim();
+      if (!text) return;
+      const lead = chunk.length - chunk.trimStart().length;
+      args.push({
+        text,
+        start: base + chunkStart + lead,
+        end: base + chunkStart + lead + text.length,
+      });
+    };
+
+    for (let i = 0; i < inner.length; i++) {
+      const char = inner[i];
       if (escaped) {
-        current += char;
         escaped = false;
         continue;
       }
       if (char === '\\') {
         escaped = true;
-        current += char;
         continue;
       }
       if (char === '"') {
         inQuote = !inQuote;
-        current += char;
         continue;
       }
       if (char === ',' && !inQuote) {
-        const trimmed = current.trim();
-        if (trimmed) args.push(trimmed);
-        current = '';
-        continue;
+        flush(i);
+        chunkStart = i + 1;
       }
-      current += char;
     }
-
-    const trimmed = current.trim();
-    if (trimmed) args.push(trimmed);
+    flush(inner.length);
 
     return args;
+  }
+
+  /**
+   * The raw-line character range of a label argument, or undefined when there
+   * is none or it is a `$named` argument (replacing it would drop the keyword).
+   * `line` is the comment-stripped, trimmed line the arguments were scanned in;
+   * it starts after the raw line's leading whitespace.
+   */
+  private labelRangeOf(arg: ParsedArg | undefined, rawLine: string): LabelRange | undefined {
+    if (!arg || arg.text.startsWith('$')) return undefined;
+    const lead = rawLine.length - rawLine.trimStart().length;
+    return { start: lead + arg.start, end: lead + arg.end };
   }
 
   /**
