@@ -166,7 +166,7 @@ whatever). The only contract this package cares about is the shape:
 > Available from the release after 0.1.6. The docs-site playground and the demo are
 > pinned to the published package, so they do not show this yet.
 
-The renderer can add things; **it never changes your source and never writes anywhere**.
+The renderer can add and rename things; **it never changes your source and never writes anywhere**.
 It *reports* an edit, you apply it. This is the same controlled pattern as
 `onPositionChange`, and it means undo, persistence and conflict handling are whatever
 your host already has.
@@ -200,11 +200,19 @@ things. (A host that passes `isEditMode` for dragging alone sees no change at al
   with "Uses": Enter confirms (empty falls back to "Uses"), Escape or losing focus cancels
   and reports nothing, and the source is untouched until then. Releasing on empty canvas,
   on a boundary, or on the same element shows no input and reports nothing. Boundaries
-  cannot start or end a relationship in this first cut. This labels the *new* `Rel` only;
-  renaming an existing element or relationship is not offered.
+  cannot start or end a relationship in this first cut. This labels the *new* `Rel` only.
+- **Rename an element or a relationship.** Double-click an element, or a relationship's
+  label, and the same label input opens over it, pre-filled with the current label (for a
+  relationship, the label argument without its technology). On touch, **press and hold**
+  an element or a relationship label for about half a second without moving. Enter
+  confirms; Escape or losing focus cancels. Nothing is reported when the label is
+  unchanged, and an empty label falls back to a placeholder ("Uses" for a relationship,
+  the type's name for an element). A relationship with no label can be renamed by
+  double-clicking its line. Boundaries are not renamed from the diagram: a long-press on
+  one still opens the add menu.
 
-The menu opens over empty canvas or a boundary, not over an element, a connect handle or
-the legend (the native menu is still suppressed there).
+The menu opens over empty canvas or a boundary, not over an element, a connect handle, a
+relationship label or the legend (the native menu is still suppressed there).
 
 Dragging a node still moves it; the connect handle is a separate target, and the two
 gestures are mutually exclusive. All of it uses pointer events and handles
@@ -333,14 +341,53 @@ Failures are returned, not thrown: `{ ok: false, code, message }`, where `code` 
 would mean rewriting an existing line), `alias-collision`, `invalid-alias`,
 `self-relationship`, `invalid-result`.
 
+### Renaming
+
+```ts
+// An element, by alias:
+applyC4Edit(source, { kind: 'rename', target: { element: 'app' }, label: 'Billing' });
+
+// A relationship, by index into `diagram.relationships`, plus what you saw there:
+applyC4Edit(source, {
+  kind: 'rename',
+  target: { relationship: { index: 0, sourceId: 'user', targetId: 'app', label: 'Uses [HTTPS]' } },
+  label: 'Calls',
+});
+// r.source = ... Rel_D(user, app, "Calls", "HTTPS") ...
+```
+
+A rename replaces **only the characters of the label argument** on one line, written
+quoted. The alias, description, technology, tags, macro variant (`Rel_D`, `ContainerDb`,
+`_Ext`), spacing, trailing comment and every other line are byte-identical, so manual
+positions (keyed by alias) never move. An empty or whitespace-only label falls back to
+the placeholder; renaming to the current label returns the source unchanged. A boundary's
+alias is accepted too, since its label is the same argument.
+
+Relationships have no alias, so the target is their position in the parsed list plus the
+`sourceId`, `targetId` and `label` (the combined `label [technology]` string, exactly
+`C4Relationship.label`) that you saw there. `applyC4Edit` re-parses *your* text and only
+proceeds if the relationship at that index still matches, so a stale edit fails rather than
+patching a different line. The renderer reports exactly this target. If you build one
+yourself, take it from the same text you pass to `applyC4Edit`.
+
+Rename's failures are `unknown-element` (no such alias), `stale-target` (the relationship
+at that index no longer matches), `no-label-argument` (the line has no plain label
+argument to replace: for example `Person(a)`, or a `$label=…` named argument — rewriting it
+would drop the keyword) and `invalid-result`, besides `parse-error`. A `Rel` with fewer than
+three arguments does not parse at all, so it is a `parse-error`. The host's duties are the
+same as for any edit: apply `edit` to your source and store `context.positions`, in one
+update.
+
 Four guarantees worth relying on:
 
-- **The source stays canonical.** An edit is an insertion (one line, or one two-line block
-  for a boundary) at a character offset. No
-  existing byte changes: comments, `Rel` technology arguments, `Rel_D`-style variants,
+- **The source stays canonical.** An add is an insertion (one line, or one two-line block
+  for a boundary) at a character offset, and a rename splices one label argument. No other
+  byte changes: comments, `Rel` technology arguments, `Rel_D`-style variants,
   `!include`, `title`, `SHOW_LEGEND()` and `LAYOUT_*` all survive, and CRLF files get CRLF.
   The parsed model is lossy and is never re-serialised.
-- **The result parses.** Every returned source is re-parsed before it is returned.
+- **The result parses.** Every returned source is re-parsed before it is returned. For a
+  rename that also means the same elements, aliases and relationships, with only the
+  target's label changed.
 - **Aliases are unique and valid.** Without `alias` one is generated from the label
   (`Cache` → `cache`, then `cache_2`, …), avoiding every existing id, macro names and the
   reserved `__legend__`. The renderer decides the alias itself because positions are keyed

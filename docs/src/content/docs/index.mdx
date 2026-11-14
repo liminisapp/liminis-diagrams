@@ -25,10 +25,11 @@ until you've already built against it. Four things this package does **not** do:
    What the package *does* offer (from the release after 0.1.6) is adding: in edit mode
    `C4InteractiveRenderer` lets a user **add an element or an empty boundary** (right-click the canvas, or
    long-press on touch, pick a kind, name it inline) and **add a relationship** (drag
-   from one element to another, then label it inline), and reports each as an edit. `applyC4Edit` in `./core` turns that edit into new source
-   text — one inserted line (or one two-line block, for an added boundary), nothing else touched — and the host applies it. Delete,
-   rename, re-parent and editing an existing relationship are not supported; those stay
-   source edits. See
+   from one element to another, then label it inline), and reports each as an edit. It also lets a user **rename** an element or a relationship
+   (double-click it, or long-press on touch). `applyC4Edit` in `./core` turns that edit into new source
+   text — one inserted block (one line, or two for an added boundary) for an add, or just the label argument replaced for a rename,
+   nothing else touched — and the host applies it. Delete, re-parent, changing an element's
+   kind and editing a description or technology are not supported; those stay source edits. See
    [Recipe 4](./recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities).
 2. **No persistence.** `@liminis/diagrams` never writes anywhere. `C4InteractiveRenderer`
    reports position changes and edits via callbacks; storing them — in a file, a database, a

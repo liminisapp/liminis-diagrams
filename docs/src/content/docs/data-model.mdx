@@ -82,6 +82,7 @@ interface C4Relationship {
   sourceId: string;   // C4Element.id this relationship starts from
   targetId: string;   // C4Element.id this relationship points to
   label: string;       // "label" or "label [technology]" if a technology arg was given
+  technology?: string; // the technology argument, only when non-empty (from the release after 0.1.6)
 }
 ```
 
@@ -103,9 +104,16 @@ interface ElementSpan {
   line: number;        // 0-based line of the macro call
   closeLine?: number;  // 0-based line of the closing `}`, for a boundary closed on a later line
   parent?: string;     // enclosing boundary id; undefined at top level
+  labelRange?: LabelRange;
 }
-interface RelationshipSpan { line: number; parent?: string }
+interface RelationshipSpan { line: number; parent?: string; labelRange?: LabelRange }
+interface LabelRange { start: number; end: number } // [start, end) offsets within the raw line
 ```
+
+`labelRange` is where the label argument sits on its line (`args[1]` of an element,
+`args[2]` of a relationship), including its quotes. It is absent when there is no label
+argument or it is a `$named` one. `applyC4Edit`'s `rename` replaces exactly this range.
+`ElementSpan` carries the same optional `labelRange`.
 
 `closeLine` is absent for a boundary written without braces, as a single-line `{ }`, or
 never closed — exactly the shapes that cannot take a new child by pure insertion. A
@@ -159,8 +167,12 @@ interface LayoutEdge {
   target: string;
   points: Point[];    // [sourcePoint, targetPoint] — where the edge crosses each node's boundary
   label: string;
+  relationshipIndex?: number; // index into diagram.relationships (from the release after 0.1.6)
 }
 ```
+
+`edges[i]` is not always `relationships[i]`: a relationship naming an element that does not
+exist produces no edge, so `relationshipIndex` says which relationship an edge draws.
 
 ## `Point`
 
