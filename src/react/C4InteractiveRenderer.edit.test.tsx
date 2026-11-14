@@ -683,3 +683,203 @@ describe('pinned positions (FR-027)', () => {
     expect(withLegend.onEdit.mock.calls[0][1].positions.__legend__).toEqual({ x: 1, y: 2 });
   });
 });
+
+// =============================================================================
+// add boundary
+// =============================================================================
+
+function chooseBoundary(c: HTMLElement, kind: string) {
+  fireEvent.click(q(c, `[data-boundary-kind="${kind}"]`)!);
+}
+function placeBoundary(c: HTMLElement, kind: string, p: { x: number; y: number }, target?: Element) {
+  rightClick(c, p, target);
+  chooseBoundary(c, kind);
+}
+
+describe('add boundary', () => {
+  it('lists the boundary kinds in their own labelled group, apart from the element kinds', () => {
+    const { container } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    const menu = menuOf(container)!;
+    expect(menu.getAttribute('aria-label')).toBe('Add to diagram');
+    const groups = Array.from(menu.querySelectorAll('[role="group"]'));
+    expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual(['Elements', 'Boundaries']);
+    const boundaries = groups[1];
+    expect(Array.from(boundaries.querySelectorAll('[data-boundary-kind]')).map((b) => b.getAttribute('data-boundary-kind'))).toEqual([
+      'systemBoundary',
+      'containerBoundary',
+      'boundary',
+    ]);
+    expect(Array.from(boundaries.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
+      'System boundary',
+      'Container boundary',
+      'Boundary',
+    ]);
+    // Element kinds are untouched and none of them is a boundary item.
+    expect(groups[0].querySelectorAll('[data-kind]')).toHaveLength(7);
+    expect(groups[0].querySelector('[data-boundary-kind]')).toBeNull();
+  });
+
+  it('arrow keys move through both groups and wrap', () => {
+    const { container } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    const menu = menuOf(container)!;
+    fireEvent.keyDown(menu, { key: 'ArrowUp' }); // wraps from first to last
+    expect(document.activeElement).toBe(q(container, '[data-boundary-kind="boundary"]'));
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(q(container, '[data-boundary-kind="containerBoundary"]'));
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(q(container, '[data-kind="componentDb"]'));
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(q(container, '[data-boundary-kind="systemBoundary"]'));
+  });
+
+  it('places at the clicked point, names inline, and reports one add-boundary edit', () => {
+    const { container, onEdit } = setup();
+    placeBoundary(container, 'containerBoundary', { x: 900, y: 900 });
+
+    expect(menuOf(container)).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(q(container, '[data-pending-boundary]')).not.toBeNull();
+    expect(q(container, '[data-pending-element]')).toBeNull();
+    const input = labelInput(container)!;
+    expect(input.getAttribute('aria-label')).toBe('Boundary label');
+    expect(input.value).toBe('Container boundary');
+    fireEvent.change(input, { target: { value: 'API Application' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    const [edit, ctx] = onEdit.mock.calls[0];
+    expect(edit).toEqual({
+      kind: 'add-boundary',
+      boundaryKind: 'containerBoundary',
+      label: 'API Application',
+      alias: 'api_application',
+    });
+    // Centred on the click (240x160 empty boundary).
+    expect(ctx.positions.api_application).toEqual({ x: 780, y: 820 });
+    expect(labelInput(container)).toBeNull();
+    expect(q(container, '[data-pending-boundary]')).toBeNull();
+  });
+
+  it('falls back to the per-kind placeholder when the label is confirmed empty', () => {
+    const { container, onEdit } = setup();
+    placeBoundary(container, 'systemBoundary', { x: 900, y: 900 });
+    const input = labelInput(container)!;
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onEdit.mock.calls[0][0]).toEqual({
+      kind: 'add-boundary',
+      boundaryKind: 'systemBoundary',
+      label: 'System boundary',
+      alias: 'system_boundary',
+    });
+  });
+
+  it('reports nothing on Escape or blur, and leaves no stuck state', () => {
+    const { container, onEdit } = setup();
+    placeBoundary(container, 'boundary', { x: 900, y: 900 });
+    fireEvent.keyDown(labelInput(container)!, { key: 'Escape' });
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(q(container, '[data-pending-boundary]')).toBeNull();
+    placeBoundary(container, 'boundary', { x: 900, y: 900 });
+    fireEvent.blur(labelInput(container)!);
+    expect(onEdit).not.toHaveBeenCalled();
+    // Gestures work again.
+    rightClick(container, { x: 900, y: 900 });
+    expect(menuOf(container)).not.toBeNull();
+  });
+
+  it('is top level on empty canvas and nested in the boundary it was opened in', () => {
+    const { container, onEdit } = setup();
+    placeBoundary(container, 'boundary', { x: 900, y: 900 });
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[0][0]).not.toHaveProperty('parent');
+
+    const b = rectOf(container, 'b');
+    placeBoundary(container, 'containerBoundary', { x: b.x + b.width - 10, y: b.y + b.height - 10 }, q(container, '[data-node-id="b"]')!);
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[1][0]).toMatchObject({ kind: 'add-boundary', parent: 'b' });
+  });
+
+  it('clamps a nested boundary into its parent content area so the parent does not move', () => {
+    const { container, onEdit } = setup();
+    const b = rectOf(container, 'b');
+    placeBoundary(container, 'boundary', { x: b.x + 5, y: b.y + 5 }, q(container, '[data-node-id="b"]')!);
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    const pos = onEdit.mock.calls[0][1].positions.boundary;
+    expect(pos.x).toBeGreaterThanOrEqual(b.x + 40);
+    expect(pos.y).toBeGreaterThanOrEqual(b.y + 55);
+  });
+
+  it('opening the menu inside an empty boundary resolves it as the parent, innermost first', () => {
+    const diagram = parseC4(`System_Boundary(outer, "Outer") {
+  Container_Boundary(inner, "Inner") {
+  }
+}
+Person(u, "U")`).diagram!;
+    const { container, onEdit } = setup({ diagram });
+    const inner = rectOf(container, 'inner');
+    const outer = rectOf(container, 'outer');
+    expect(inner.width).toBeGreaterThan(0);
+    expect(inner.height).toBeGreaterThan(0);
+    place(container, 'component', centre(inner), q(container, '[data-node-id="inner"]')!);
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[0][0]).toMatchObject({ kind: 'add-element', parent: 'inner' });
+
+    placeBoundary(container, 'boundary', centre(inner), q(container, '[data-node-id="inner"]')!);
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[1][0]).toMatchObject({ kind: 'add-boundary', parent: 'inner' });
+
+    // Inside the outer box but outside the inner one: the outer is the parent.
+    placeBoundary(container, 'boundary', { x: outer.x + 3, y: outer.y + 3 }, q(container, '[data-node-id="outer"]')!);
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    expect(onEdit.mock.calls[2][0]).toMatchObject({ parent: 'outer' });
+  });
+
+  it('pins every laid-out node, lets host positions win, and keys the new alias at the click', () => {
+    const manual = { user: { x: 12.5, y: 33.25 } };
+    const { container, diagram, onEdit } = setup({ manualPositions: manual });
+    placeBoundary(container, 'boundary', { x: 900, y: 900 });
+    fireEvent.keyDown(labelInput(container)!, { key: 'Enter' });
+    const { positions } = onEdit.mock.calls[0][1];
+    expect(positions.user).toEqual({ x: 12.5, y: 33.25 });
+    expect(positions.boundary).toEqual({ x: 780, y: 820 });
+    expect(Object.keys(positions).sort()).toEqual([...diagram.elements.map((e) => e.id), 'boundary'].sort());
+  });
+
+  it('offers no connect handle on a new or empty boundary', () => {
+    const diagram = parseC4('Boundary(lone, "Lone") {\n}\nPerson(u, "U")').diagram!;
+    const { container } = setup({ diagram });
+    expect(q(container, '[data-connect-handle="lone"]')).toBeNull();
+    expect(q(container, '[data-connect-handle="u"]')).not.toBeNull();
+  });
+
+  it('is gated like elements: no menu without onEdit or outside edit mode', () => {
+    for (const overrides of [{ onEdit: undefined }, { isEditMode: false }]) {
+      const { container } = setup(overrides);
+      rightClick(container, { x: 900, y: 900 });
+      expect(menuOf(container)).toBeNull();
+    }
+  });
+
+  it('is exclusive with other gestures while the boundary is being named', () => {
+    const { container, onEdit } = setup();
+    placeBoundary(container, 'boundary', { x: 900, y: 900 });
+    rightClick(container, { x: 50, y: 900 });
+    expect(menuOf(container)).toBeNull();
+    // Connect handles are withdrawn while the label input is open.
+    expect(q(container, '[data-connect-handle]')).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it('closes the menu on Escape, reporting nothing', () => {
+    const { container, onEdit } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    expect(menuOf(container)).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(menuOf(container)).toBeNull();
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+});
