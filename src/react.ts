@@ -17,6 +17,7 @@ export { C4InteractiveRenderer, LEGEND_POSITION_ID } from './react/C4Interactive
 export type { C4InteractiveRendererProps, C4EditContext } from './react/C4InteractiveRenderer';
 
 export { useC4DiagramDrag } from './react/hooks/useC4DiagramDrag';
+export type { C4DragInfo } from './react/hooks/useC4DiagramDrag';
 export { useC4ConnectDrag } from './react/hooks/useC4ConnectDrag';
 export type {
   UseC4ConnectDragProps,
