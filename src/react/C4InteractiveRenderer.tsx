@@ -27,9 +27,10 @@ import {
 } from '../core/alias';
 import { sanitizeC4Text, type C4Edit, type C4RelationshipTarget } from '../core/edit';
 import { estimateLabelSize } from '../core/edge-clipping';
-import { useC4DiagramDrag } from './hooks/useC4DiagramDrag';
+import { useC4DiagramDrag, type C4DragInfo } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import { findBoundaryAt, findElementAt } from './hit-test';
+import { clampIntoBoundary, decideReparent, findDropTarget } from './reparent-drop';
 import { useC4LongPress } from './hooks/useC4LongPress';
 import { EditMenu, type EditMenuChoice } from './EditMenu';
 import { LabelInput } from './LabelInput';
@@ -99,6 +100,15 @@ type RenameState =
       y: number;
       current: string;
     };
+
+/** The boundary a drag would drop into, as drawn by the highlight. In SVG space. */
+interface DropTarget {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 /** What a long-press resolved to when it started. */
 type PressTarget =
@@ -254,6 +264,15 @@ export function C4InteractiveRenderer({
   // Label being renamed in place; likewise nothing is reported until confirmed.
   const [renaming, setRenaming] = useState<RenameState | null>(null);
 
+  // Boundary that would receive the current drag if released now (highlighted).
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  // Layout as it was when the drag began. Drop targets are found against this, not the
+  // live layout: a boundary grows to contain whatever is dragged over it, so the live
+  // layout always puts the pointer inside the item's own parent.
+  const dragSnapshotRef = useRef<LayoutNode[] | null>(null);
+  // Whether the pointer has moved since the drag began (a bare click must not re-parent).
+  const dragMovedRef = useRef(false);
+
   // Local positions during drag (merged with persisted positions)
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
   // Ref mirror of dragPositions — always current, avoids stale closure in handleNodeDragEnd
@@ -330,7 +349,25 @@ export function C4InteractiveRenderer({
   }, []);
 
   // Handle real-time position updates during drag, throttled to rAF
-  const handleNodeDrag = useCallback((nodeId: string, x: number, y: number) => {
+  const handleNodeDrag = useCallback((nodeId: string, x: number, y: number, info?: C4DragInfo) => {
+    dragMovedRef.current = true;
+    if (canEdit && info) {
+      const snapshot = dragSnapshotRef.current;
+      let next: DropTarget | null = null;
+      if (snapshot && info.point && nodeId !== LEGEND_POSITION_ID) {
+        const target = findDropTarget(snapshot, nodeId, info.point);
+        const decision = decideReparent({
+          draggedParent: diagram.elements.find((e) => e.id === nodeId)?.parent,
+          target: target?.id,
+          altKey: info.altKey,
+        });
+        if (target && decision?.parent === target.id) {
+          next = { id: target.id, x: target.x, y: target.y, width: target.width, height: target.height };
+        }
+      }
+      setDropTarget((prev) => (prev?.id === next?.id ? prev : next));
+    }
+
     // On first move of a new drag, clear any stale positions from previous drag
     if (!dragStartPosRef.current && Object.keys(dragPositionsRef.current).length > 0) {
       dragPositionsRef.current = {};
@@ -371,15 +408,55 @@ export function C4InteractiveRenderer({
         }
       });
     }
-  }, [manualPositions, autoLayout.nodes, applyDragWithChildren, updateDragPositions]);
+  }, [canEdit, diagram.elements, manualPositions, autoLayout.nodes, applyDragWithChildren, updateDragPositions]);
 
   // Handle drag end - persist positions
   // Uses dragPositionsRef (not dragPositions state) to avoid stale closure race
-  const handleNodeDragEnd = useCallback((nodeId: string, x: number, y: number) => {
+  const handleNodeDragEnd = useCallback((nodeId: string, x: number, y: number, info?: C4DragInfo) => {
     // Cancel any pending rAF
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+    }
+
+    // Dropped over a different boundary, or ⌥-dragged out of its own: a re-parent. Decided at
+    // release, against the pre-drag layout, so a child left outside its boundary is found there.
+    const snapshot = dragSnapshotRef.current;
+    const moved = dragMovedRef.current;
+    dragSnapshotRef.current = null;
+    dragMovedRef.current = false;
+    setDropTarget(null);
+    if (canEdit && moved && snapshot && info?.point && nodeId !== LEGEND_POSITION_ID) {
+      const target = findDropTarget(snapshot, nodeId, info.point);
+      const decision = decideReparent({
+        draggedParent: diagram.elements.find((e) => e.id === nodeId)?.parent,
+        target: target?.id,
+        altKey: info.altKey,
+      });
+      if (decision) {
+        // Pin every other node where the user saw it before the drag, so the old boundary
+        // shrinks back and nothing else moves; the host's own positions stay as they are.
+        const pinned = { ...collectNodePositions(snapshot), ...manualPositions };
+        const base = dragStartPositionsRef.current;
+        if (!dragStartPosRef.current) {
+          dragStartPositionsRef.current = pinned;
+          dragStartPosRef.current = pinned[nodeId] ?? { x, y };
+        }
+        // Keep a nested drop inside its new parent's content area so it does not shift its own origin.
+        const at = target && decision.parent !== undefined ? clampIntoBoundary(target, x, y) : { x, y };
+        const updates = applyDragWithChildren(nodeId, at.x, at.y, Object.keys(base).length > 0 ? base : pinned);
+        const positions = { ...pinned, ...updates };
+        // Show the result until the host's new positions arrive.
+        dragPositionsRef.current = positions;
+        setDragPositions(positions);
+        dragStartPosRef.current = null;
+        dragStartPositionsRef.current = {};
+        onEdit?.(
+          decision.parent === undefined ? { kind: 'reparent', id: nodeId } : { kind: 'reparent', id: nodeId, parent: decision.parent },
+          { positions },
+        );
+        return;
+      }
     }
 
     // Read latest drag positions from ref (immune to stale closure)
@@ -414,13 +491,34 @@ export function C4InteractiveRenderer({
     // manualPositions catches up.
     dragStartPosRef.current = null;
     dragStartPositionsRef.current = {};
-  }, [manualPositions, autoLayout.nodes, onPositionChange, applyDragWithChildren]);
+  }, [canEdit, diagram.elements, manualPositions, autoLayout.nodes, onPositionChange, onEdit, applyDragWithChildren]);
+
+  /** Drop every trace of a drag in flight without reporting it. */
+  const resetDragState = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    pendingDragRef.current = null;
+    dragPositionsRef.current = {};
+    setDragPositions({});
+    dragStartPosRef.current = null;
+    dragStartPositionsRef.current = {};
+    dragSnapshotRef.current = null;
+    dragMovedRef.current = false;
+    setDropTarget(null);
+  }, []);
+
+  // `pointercancel` and Escape abandon a drag: no edit, no position change. Opt-in to
+  // the hook's cancel semantics only when editing, so a plain `isEditMode` is unchanged.
+  const handleNodeDragCancel = useCallback(() => resetDragState(), [resetDragState]);
 
   // Set up drag hook (window-level listeners handle mousemove/mouseup)
   const { draggedNodeId, startNodeDrag, cancelDrag } = useC4DiagramDrag({
     svgRef,
     onNodeDrag: handleNodeDrag,
     onNodeDragEnd: handleNodeDragEnd,
+    onNodeDragCancel: canEdit ? handleNodeDragCancel : undefined,
     enabled: isEditMode,
   });
 
@@ -469,9 +567,13 @@ export function C4InteractiveRenderer({
   const guardedStartNodeDrag = useCallback(
     (nodeId: string, nodeX: number, nodeY: number, e: React.PointerEvent | React.MouseEvent) => {
       if (connectSourceId !== null) return;
+      if (canEdit && draggedNodeIdRef.current === null) {
+        dragSnapshotRef.current = layout.nodes;
+        dragMovedRef.current = false;
+      }
       startNodeDrag(nodeId, nodeX, nodeY, e);
     },
-    [connectSourceId, startNodeDrag],
+    [canEdit, connectSourceId, layout.nodes, startNodeDrag],
   );
 
   // Edit mode (or the callback) going away drops any half-finished add.
@@ -481,6 +583,7 @@ export function C4InteractiveRenderer({
       setPending(null);
       setPendingRel(null);
       setRenaming(null);
+      setDropTarget(null);
     }
   }, [canEdit]);
 
@@ -597,15 +700,7 @@ export function C4InteractiveRenderer({
   const abortMoveDrag = () => {
     if (draggedNodeIdRef.current === null) return;
     cancelDrag();
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    pendingDragRef.current = null;
-    dragPositionsRef.current = {};
-    setDragPositions({});
-    dragStartPosRef.current = null;
-    dragStartPositionsRef.current = {};
+    resetDragState();
   };
 
   // What the press in flight resolved to when it started.
@@ -747,6 +842,7 @@ export function C4InteractiveRenderer({
               renaming,
               connectSourceId,
               connectPointer,
+              dropTarget,
               onLongPressPointerDown,
               onContextMenu: handleContextMenu,
               onSelectKind: handleSelectKind,
@@ -794,6 +890,7 @@ interface EditingProps {
   renaming: RenameState | null;
   connectSourceId: string | null;
   connectPointer: Point | null;
+  dropTarget: DropTarget | null;
   onLongPressPointerDown: (e: React.PointerEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onSelectKind: (choice: EditMenuChoice) => void;
@@ -1111,6 +1208,24 @@ function C4InteractiveSvg({
               strokeDasharray="6 4"
             />
           </g>
+        )}
+
+        {/* Drop target: the boundary that would receive the dragged item. Dashed as well as
+            coloured, so colour is not the only cue. */}
+        {editing?.dropTarget && draggedNodeId !== null && (
+          <rect
+            data-drop-target={editing.dropTarget.id}
+            x={editing.dropTarget.x}
+            y={editing.dropTarget.y}
+            width={editing.dropTarget.width}
+            height={editing.dropTarget.height}
+            fill={isDarkMode ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.08)'}
+            stroke={accent}
+            strokeWidth={3}
+            strokeDasharray="8 5"
+            rx={6}
+            style={{ pointerEvents: 'none' }}
+          />
         )}
 
         {/* Ghost of an element waiting for its label; not in the source yet */}
