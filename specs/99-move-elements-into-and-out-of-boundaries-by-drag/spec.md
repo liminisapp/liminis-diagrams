@@ -2,7 +2,7 @@
 
 **Feature Branch**: `fabrik/issue-99`
 **Created**: 2026-11-13
-**Status**: Draft
+**Status**: Specified
 **Input**: User description: "## Problem
 
 There's no way to move an element into or out of a boundary from the diagram. Which boundary an element belongs to is decided by where its line sits in the source, so the user has to cut and paste the line by hand. Dragging a child past its boundary's edge doesn't move it out: the boundary just grows to contain it, because the layout sizes a boundary to fit its children. Dropping an element on a boundary only changes the element's position.
@@ -115,18 +115,24 @@ Holding ⌥ (Alt) while dragging a child lifts it out of its current boundary. R
 
 ---
 
-### User Story 4 - Move out on a touch device (Priority: P2)
+### User Story 4 - Select an element on touch and use its action bar to rename or move out (Priority: P2)
 
-A touch user, with no ⌥ key, has an equivalent way to move an element out of its boundary. The gesture is decided by Q2.
+A touch user, with no ⌥ key, taps an element to select it. A small action bar appears next to it with **Rename** and **Move out**. Move out appears only when the element has a parent boundary. Choosing Move out lifts the element to the top level; choosing Rename starts the inline rename. This replaces long-press-on-element as the touch rename gesture from #94.
 
-**Why this priority**: Edit mode is used on iPad. Without an equivalent, touch users could move elements in but never out.
+**Why this priority**: Edit mode is used on iPad. Without an equivalent, touch users could move elements in but never out. The old long-press rename also collides with press-then-drag (a pause before moving turns the drag into a rename), so the same change settles every touch gesture on an element.
 
-**Independent Test**: On a touch device (or touch-emulated pointer events), perform the chosen move-out gesture on a child element and confirm the same `reparent` to top level is reported as for ⌥-drag on empty canvas.
+**Independent Test**: On a touch device (or touch-emulated pointer events), tap a child element: the action bar shows Rename and Move out. Choose Move out and confirm the same `reparent` to top level is reported as for ⌥-drag on empty canvas. Tap a top-level element: the bar shows Rename only. Press and hold an element, pause, then drag: it moves, with no rename.
 
 **Acceptance Scenarios**:
 
-1. **Given** an element in a boundary on a touch device, **When** the user performs the move-out gesture, **Then** the same `reparent` edit is reported as for a ⌥-drag out. The exact gesture is pending Q2.
-2. **Given** the move-out gesture, **When** it is performed, **Then** it does not trigger rename, the add menu or a connect drag.
+1. **Given** an element in a boundary on a touch device, **When** the user taps it, **Then** it is selected and an action bar with Rename and Move out appears next to it.
+2. **Given** a top-level element, **When** the user taps it, **Then** the action bar shows Rename and no Move out.
+3. **Given** the action bar, **When** the user chooses Move out, **Then** a `reparent` to the top level is reported, the same edit as a ⌥-drag out.
+4. **Given** the action bar, **When** the user chooses Rename, **Then** the inline rename flow starts for that element.
+5. **Given** a selected element, **When** the user taps empty canvas or presses Escape, **Then** it is deselected and the action bar disappears.
+6. **Given** a finger pressed on an element, **When** the user pauses and then drags, **Then** the element is dragged and no rename starts.
+7. **Given** a long-press on empty canvas or on a boundary, **Then** the add menu opens, as today.
+8. **Given** the action bar is shown, **When** an action is chosen, **Then** it does not trigger the add menu or a connect drag.
 
 ---
 
@@ -161,17 +167,21 @@ A host calls `applyC4Edit(source, { kind: 'reparent', id, parent? })` and gets n
 - CRLF sources and a missing trailing newline are preserved (as in ADR-92/95).
 - If the pointer is released with ⌥ no longer held, see FR-013.
 - The moved element keeps the dropped position; a nested drop is clamped into its parent's content area as in #95 so the parent does not shift its own origin.
-- A relationship-heavy element moving into a boundary is not treated specially (Q3).
+- A relationship-heavy element moving into a boundary is not treated specially: no warning or confirmation.
 - Move, connect, the add menu and rename remain mutually exclusive: a re-parent drag cannot start or run while any of them is active.
+- The action bar is hidden while a drag of the selected element is in progress, and is not offered for boundaries (only for elements) unless a boundary is itself a re-parent candidate. [Boundaries can still be moved out by ⌥-drag on desktop; touch move-out for boundaries is covered by the same bar if the plan finds it no more complex, see Assumption A9.]
+- Moving an element out via the action bar when its parent is itself nested puts it at the top level, not in the grandparent.
+- Entering a drag, rename, connect or the add menu while an element is selected deselects it or hides the bar, so the bar is never stale.
+- Leaving edit mode, or changing the diagram so the selected alias no longer exists, clears the selection.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The edit union gains a `reparent` member `{ kind: 'reparent', id, parent?: alias }`, added without changing any existing member or exported type's meaning.
-- **FR-002**: `applyC4Edit` with `reparent` moves the element's line, or a boundary's whole `{ … }` block, to the end of the new parent's block, or to the top level when `parent` is undefined, using the #92 top-level insertion rule. [NEEDS CLARIFICATION: Q4 confirms the position within the destination.]
+- **FR-002**: `applyC4Edit` with `reparent` moves the element's line, or a boundary's whole `{ … }` block, to the end of the destination: immediately before the new parent's closing `}`, or, for the top level, by the #92 top-level insertion rule (after the last top-level element or boundary block, else before `@enduml`, else the end of text).
 - **FR-003**: After a `reparent`, the result parses and the element's parent in `parseC4WithSpans` equals the requested parent (or none for the top level). Every other element keeps its alias and its parent.
-- **FR-004**: Apart from the moved lines themselves, and their indentation per Q1, the result is byte-identical to the input: comments, `Rel` arguments, direction variants, blank lines, line endings and every untouched line. Moving a boundary carries all its children, and everything inside its block, with it.
+- **FR-004**: Apart from the moved lines themselves, and their re-indentation per FR-021, the result is byte-identical to the input: comments, `Rel` arguments, direction variants, blank lines, line endings and every untouched line. Moving a boundary carries all its children, and everything inside its block, with it.
 - **FR-005**: Aliases are never changed by a `reparent`, so relationships and manual positions keyed by alias survive.
 - **FR-006**: `applyC4Edit` rejects, with a result code and a message and without throwing: an unknown `id`; an unknown `parent`, or a `parent` that is not a boundary; a `parent` that is unterminated (no closing `}`); and moving a boundary into itself or any of its descendants. The source is left unchanged in each case.
 - **FR-007**: A `reparent` to the element's current parent is a no-op. The renderer never reports one, and `applyC4Edit` handles it harmlessly.
@@ -180,43 +190,56 @@ A host calls `applyC4Edit(source, { kind: 'reparent', id, parent? })` and gets n
 - **FR-010**: While a drag is in progress, the boundary that would receive the drop is highlighted. Only the innermost valid target is highlighted; the highlight is cleared on release, `pointercancel`, Escape or leaving edit mode. Invalid targets (the item itself, its descendants) are never highlighted.
 - **FR-011**: Holding ⌥ (Alt) during a drag of a child means "leave my current boundary". Released on empty canvas, it reports a `reparent` to the top level; released over a boundary other than the current parent, it reports a `reparent` into that boundary.
 - **FR-012**: After an option-drag out, the old boundary shrinks back to fit its remaining children, and no other manual position changes. The moved item keeps the dropped position.
-- **FR-013**: The ⌥ state that counts is the one at the moment of release. [NEEDS CLARIFICATION: confirm in the plan or in Q-follow-up if the host wants latch-at-start semantics instead. Default stated in Assumptions.]
+- **FR-013**: The ⌥ state that counts is the one at the moment of release.
 - **FR-014**: A plain (non-⌥) drag that ends on empty canvas, or inside the item's own parent, never reports a `reparent`; a child dragged past its boundary's edge still just grows the boundary, as today.
-- **FR-015**: A touch equivalent for "move out" exists and reports the same `reparent` to the top level as FR-011 does. [NEEDS CLARIFICATION: gesture is Q2.]
+- **FR-015**: A touch equivalent for "move out" exists: choosing **Move out** in the selected element's action bar (FR-022) reports the same `reparent` to the top level as FR-011 does for a drag onto empty canvas.
 - **FR-016**: The re-parent drag handles `pointercancel` (and lost pointer capture) by abandoning the gesture with no edit and no position change.
 - **FR-017**: Re-parenting is available only when edit mode is on and `onEdit` is supplied. Move, connect, the add menu and rename stay mutually exclusive.
 - **FR-018**: The package never writes the source or positions anywhere. `onEdit` reports, and the host applies. The change is additive: existing props, edits and results keep their types and meanings.
 - **FR-019**: A `reparent` whose result does not re-parse to the intended structure (every other element present with its original parent; the moved element or block under its new parent) is reported as `invalid-result` rather than returned as ok, in the same spirit as ADR-95's `verify`.
-- **FR-020**: Documentation is updated: the playground shows the feature; the recipes describe the host's responsibilities for `reparent`; and an ADR is added at `adrs/99-<slug>.md` titled `# ADR-99: …`. The ADR records the "one contiguous block" amendment for a move (Assumption 1).
+- **FR-020**: Documentation is updated: the playground shows the feature; the recipes describe the host's responsibilities for `reparent`; and an ADR is added at `adrs/99-<slug>.md` titled `# ADR-99: …`. The ADR records the "one contiguous block" amendment for a move (Assumption A1), and the touch-gesture change in FR-023.
+- **FR-021**: A moved line, or every line of a moved boundary block, is re-indented to the destination's sibling indent: the same rule `add-element` uses (the last sibling's indent, else the parent's indent plus one unit; top level uses the top-level indent). A boundary block is shifted by one uniform amount, so its internal relative indentation is preserved. Blank lines stay blank. Apart from indentation, line content is unchanged.
+- **FR-022**: In edit mode, tapping an element selects it and shows a small action bar next to it with **Rename** and **Move out**. **Move out** is shown only when the element has a parent boundary. Tapping empty canvas, or pressing Escape, deselects the element and hides the bar.
+- **FR-023**: On touch, long-press on an element no longer starts a rename (this replaces the #94 touch rename gesture); rename on touch is started from the action bar's **Rename**. A pause between pressing an element and dragging it never turns the drag into a rename.
+- **FR-024**: Long-press stays only on empty canvas and on boundaries, where it opens the add menu, as today.
+- **FR-025**: On desktop, ⌥-drag still moves out and double-click still renames. The action bar may also appear on desktop if that is simpler.
+- **FR-026**: Choosing an action in the action bar does not start the add menu or a connect drag, and starting any of move, connect, the add menu or rename hides the bar, so the four stay mutually exclusive.
+- **FR-027**: Moving an element out via the action bar leaves its position unchanged (it keeps where it is on the canvas) and reports it to `onEdit` in the same shape as other edits, positions included.
+- **FR-028**: Moving out places the element at the top level, regardless of how deeply its parent is nested.
 
 ### Key Entities *(if applicable)*
 
 - **Reparent edit**: `{ kind: 'reparent', id, parent? }`. `id` is the alias of the element or boundary being moved. `parent` is the alias of the destination boundary; omitted means top level.
 - **Drop target**: the innermost boundary under the pointer at release, excluding the dragged item and its descendants; none means the top level.
 - **Moved block**: for an element, its single line; for a boundary, its opening line through its closing `}`, including everything between.
+- **Selected element / action bar**: the single element a user has tapped in edit mode, and the small bar beside it offering Rename and (when it has a parent boundary) Move out.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: A user can move an element into a boundary, and out of it, using only the diagram (no source editing), on desktop and on touch.
-- **SC-002**: For every re-parent fixture, a diff of input against output shows only the moved lines (plus their re-indentation if allowed); every other line is byte-identical.
+- **SC-002**: For every re-parent fixture, a diff of input against output shows only the moved lines, re-indented to the destination; every other line is byte-identical.
 - **SC-003**: Every alias, and every manual position keyed by alias, present before a re-parent is present and unchanged after it, except the moved item's own dropped position.
 - **SC-004**: In 100% of attempts to move a boundary into itself or a descendant, the result is a coded rejection with the source unchanged and no exception.
 - **SC-005**: During any drag, exactly zero or one boundary is highlighted, and it is the one that receives the drop if released.
 - **SC-006**: An option-drag to empty canvas yields a `reparent` to top level, the old boundary shrinks to fit its remaining children, and no other element's manual position changes.
 - **SC-007**: A plain drag within the current boundary produces no `reparent`, and its behaviour is identical to before this change.
-- **SC-008**: The existing test suite for #92, #94 and #95 passes unchanged.
+- **SC-008**: The existing test suite for #92, #94 and #95 passes unchanged, except for the tests that asserted the old touch long-press-to-rename behaviour, which are replaced by tests of FR-022 and FR-023.
+- **SC-009**: On touch, a press, pause and drag on an element never starts a rename, and a tap-selected child element can be moved out with two taps (select, then Move out).
 
 ## Assumptions
 
-- **A1: "One contiguous block" becomes "one moved block".** A move removes a block at its old place and inserts it at the new one, so the "pure insertion" guarantee of ADR-92/95 cannot hold for it. The guarantee that carries over is: only the moved block changes, in position (and indentation, per Q1); every other byte is identical. The ADR will record this as an amendment, as ADR-95 did for ADR-92.
+- **A1: "One contiguous block" becomes "one moved block".** A move removes a block at its old place and inserts it at the new one, so the "pure insertion" guarantee of ADR-92/95 cannot hold for it. The guarantee that carries over is: only the moved block changes, in position and indentation; every other byte is identical. The ADR will record this as an amendment, as ADR-95 did for ADR-92.
 - **A2: A moved boundary's children keep their manual positions** (keyed by alias), and the dropped position applies to the dragged item.
-- **A3: ⌥ is read at release.** If ⌥ was held at the end of the drag, the "move out" rule applies; this is the simplest model and avoids a stuck-modifier state. Challenge this if you want it latched at drag start.
-- **A4: Elements can be dropped into any boundary kind** (`Boundary`, `System_Boundary`, `Container_Boundary`); C4 nesting rules are not enforced, consistent with #92 Q3 and the Q3 default below.
+- **A3: ⌥ is read at release.** If ⌥ was held at the end of the drag, the "move out" rule applies; this is the simplest model and avoids a stuck-modifier state.
+- **A4: Elements can be dropped into any boundary kind** (`Boundary`, `System_Boundary`, `Container_Boundary`); C4 nesting rules are not enforced, consistent with #92 Q3. There is no warning for moving a relationship-heavy element.
 - **A5: A drop onto the item's current parent in a non-⌥ drag is a plain move**, and in an ⌥ drag it is also a plain move (the item stays where it is). ⌥ only matters when the item is not dropped on its own parent.
 - **A6: Lines only inside the moved block are moved.** Comments or blank lines *adjacent* to an element's line (above it, say) are not part of the move; only the element's own line (or the boundary's own block) moves.
-- **A7: Q1–Q4 defaults, if the user does not decide otherwise:** re-indent to the destination's sibling indent; touch "move out" via a menu entry, not a drag margin; no warning on relationship-heavy moves; append after the last sibling, as `add-element` does. These are recommendations, not decisions.
+- **A7: Decisions recorded from the Specify discussion:** re-indent to the destination's sibling indent (FR-021); touch uses tap-to-select with an action bar (FR-022 to FR-024); no warning on relationship-heavy moves; the moved line goes last in the destination block, just before its `}` (FR-002).
+- **A8: The touch rename change is part of this issue.** The Background describes the touch rename gesture as "being reconsidered separately"; that reconsideration is settled here, and the replacement (action bar Rename) ships with this change.
+- **A9: The action bar is for elements.** A boundary can already be moved into another boundary by drag; whether the bar also offers Move out for a boundary on touch is left to the plan, and is acceptable either way provided a touch user has some way to move a nested boundary out (the bar is the expected one).
+- **A10: Selection is transient UI state.** It is not reported to the host, not persisted, and cleared when leaving edit mode or when the selected alias disappears.
 
 ## Out of Scope *(optional)*
 
@@ -225,11 +248,11 @@ A host calls `applyC4Edit(source, { kind: 'reparent', id, parent? })` and gets n
 - Multi-select, and therefore moving several elements at once.
 - Reordering siblings within the same boundary (a move within the same parent changes position only).
 - Enforcing C4 nesting rules (for example, containers only in system boundaries).
-- Changing the touch rename gesture, which is being reconsidered separately.
+- Further actions in the action bar beyond Rename and Move out (for example Delete).
 
 ## Source References *(optional)*
 
-- Issue #99 and the earlier editing work: #92 (add elements and relationships), #94 (positions), #95 (add boundaries).
+- Issue #99 and the earlier editing work: #92 (add elements and relationships), #94 (positions, and the touch long-press rename this change replaces), #95 (add boundaries).
 - `adrs/92-structural-editing-edit-api.md` and `adrs/95-multi-line-boundary-insertion.md`: the edit union, placement rules, `verify`, and the "one contiguous block" amendment this change extends.
 - `specs/92-add-elements-and-relationships-from-the-diagram/` and `specs/95-add-boundaries-from-the-diagram-s-context-menu/`: previous specs for the same area.
 - README "Add elements and relationships": current `onEdit` host contract (apply source and positions together, merge never clear).
