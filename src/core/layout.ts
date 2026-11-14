@@ -33,13 +33,20 @@ const DEFAULT_OPTIONS: Required<LayoutOptions> = {
 };
 
 /** Padding around boundary group contents */
-const BOUNDARY_PADDING = 40;
+export const BOUNDARY_PADDING = 40;
 
 /** Gap between a boundary and external elements outside it */
 const EXTERNAL_GAP = 80;
 
 /** Space reserved for boundary header (title + optional tech badge) */
-const BOUNDARY_HEADER_HEIGHT = 55;
+export const BOUNDARY_HEADER_HEIGHT = 55;
+
+/**
+ * Minimum box for a boundary with no children. Tall enough to leave a clickable
+ * interior below the header (a default-sized 80px box leaves only ~25px), so an
+ * empty boundary is a usable target for adding its first child.
+ */
+export const EMPTY_BOUNDARY_SIZE = { width: 240, height: 160 } as const;
 
 /** Additional height for elements with tech badges or descriptions */
 const TECH_BADGE_HEIGHT = 16;
@@ -88,6 +95,12 @@ function calculateNodeDimensions(
     // Description wraps, so limit width contribution
     const descWidth = Math.min(element.properties.description.length * 7, 360);
     width = Math.max(width, descWidth);
+  }
+
+  // A boundary with no children still needs room to click into
+  if (element.properties.style === 'boundary' && element.children.length === 0) {
+    height = Math.max(height, EMPTY_BOUNDARY_SIZE.height);
+    width = Math.max(width, EMPTY_BOUNDARY_SIZE.width);
   }
 
   // Cylinder shapes are slightly taller
@@ -836,6 +849,10 @@ function resizeBoundariesToContainChildren(nodes: LayoutNode[]): void {
   }
 }
 
+function isEmptyBoundary(node: LayoutNode): boolean {
+  return node.element.properties.style === 'boundary' && !(node.children && node.children.length > 0);
+}
+
 /**
  * Push sibling nodes apart when they overlap after boundary expansion.
  * Nodes with manual positions are anchored — only unanchored nodes or
@@ -868,6 +885,9 @@ function resolveTopLevelOverlaps(
         // avoid jitter. But if one is an expanded boundary, push the other.
         const aAnchored = !!manualPositions[a.id];
         const bAnchored = !!manualPositions[b.id];
+        // An empty boundary the user has placed stays where it was put, even
+        // next to (or over) a populated boundary.
+        if (aAnchored && bAnchored && (isEmptyBoundary(a) || isEmptyBoundary(b))) continue;
         const aBoundary = !!(a.children && a.children.length > 0);
         const bBoundary = !!(b.children && b.children.length > 0);
         let target: LayoutNode;

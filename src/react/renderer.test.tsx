@@ -137,6 +137,25 @@ describe('C4Renderer', () => {
       );
       expect(nameText).toBeTruthy();
     });
+
+    it('renders an empty boundary (hand-written, no children) as a visible dashed box with its title', () => {
+      const r = parseC4('@startuml\nContainer_Boundary(api, "API Application") {\n}\n@enduml');
+      expect(r.errors).toEqual([]);
+      const layout = layoutC4Diagram(r.diagram!);
+      const { container } = render(<C4Renderer layout={layout} isDarkMode={false} />);
+      // A Container_Boundary is a `container`, so it is drawn in the nodes layer (not the boundaries layer).
+      const layer = container.querySelector('svg');
+      const rect = layer?.querySelector('rect');
+      expect(rect?.getAttribute('stroke-dasharray')).toBe('8 4');
+      expect(Number(rect?.getAttribute('width'))).toBeGreaterThan(0);
+      expect(Number(rect?.getAttribute('height'))).toBeGreaterThan(0);
+      expect(Array.from(layer?.querySelectorAll('text') ?? []).some((t) => t.textContent === 'API Application')).toBe(true);
+
+      // A System_Boundary takes the boundaries layer.
+      const sys = parseC4('@startuml\nSystem_Boundary(s, "Sys") {\n}\n@enduml').diagram!;
+      const { container: c2 } = render(<C4Renderer layout={layoutC4Diagram(sys)} isDarkMode={false} />);
+      expect(c2.querySelector('.boundaries-layer rect')?.getAttribute('stroke-dasharray')).toBe('8 4');
+    });
   });
 
   describe('container rendering', () => {

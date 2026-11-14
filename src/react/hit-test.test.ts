@@ -45,4 +45,39 @@ describe('hit-test', () => {
     expect(findBoundaryAt(ns, centre(u))).toBeNull();
     expect(findElementAt(ns, centre(u))?.id).toBe('u');
   });
+
+  describe('empty boundaries', () => {
+    const EMPTY_SRC = `System_Boundary(outer, "Outer") {
+  Container_Boundary(inner, "Inner") {
+  }
+}
+Boundary(lone, "Lone") {
+}
+Person(u, "U")`;
+    const emptyNodes = (positions?: Record<string, { x: number; y: number }>) =>
+      layoutC4Diagram(parseC4(EMPTY_SRC).diagram!, undefined, positions).nodes;
+
+    it('an empty boundary is a click target', () => {
+      const ns = emptyNodes();
+      const lone = ns.find((n) => n.id === 'lone')!;
+      expect(findBoundaryAt(ns, centre(lone))?.id).toBe('lone');
+      expect(findElementAt(ns, centre(lone))).toBeNull();
+    });
+
+    it('prefers the innermost of nested boundaries, even when the inner one is empty', () => {
+      for (const ns of [emptyNodes(), emptyNodes({ outer: { x: 50, y: 50 }, inner: { x: 90, y: 105 } })]) {
+        const inner = ns.find((n) => n.id === 'inner')!;
+        expect(findBoundaryAt(ns, centre(inner))?.id).toBe('inner');
+        // Inside the outer box but outside the inner one: the outer wins.
+        const outer = ns.find((n) => n.id === 'outer')!;
+        expect(findBoundaryAt(ns, { x: outer.x + 3, y: outer.y + 3 })?.id).toBe('outer');
+      }
+    });
+
+    it('does not claim a point on an element', () => {
+      const ns = emptyNodes();
+      const u = ns.find((n) => n.id === 'u')!;
+      expect(findBoundaryAt(ns, centre(u))).toBeNull();
+    });
+  });
 });

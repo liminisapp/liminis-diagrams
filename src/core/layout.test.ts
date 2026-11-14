@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutC4Diagram } from './layout';
+import { layoutC4Diagram, EMPTY_BOUNDARY_SIZE } from './layout';
 import { parseC4 } from './parser';
 import type { C4Diagram, C4Element } from './types';
 
@@ -579,5 +579,136 @@ Rel(api, email, "SMTP")
       expect(result.width).toBeGreaterThan(300);
       expect(result.height).toBeGreaterThan(200);
     });
+  });
+});
+
+describe('empty boundaries', () => {
+  const SRC = `@startuml
+Person(user, "User")
+System_Boundary(full, "Full") {
+  Container(api, "API")
+}
+Container_Boundary(empty, "Empty") {
+}
+@enduml`;
+
+  function parsed() {
+    const r = parseC4(SRC);
+    expect(r.errors).toEqual([]);
+    return r.diagram!;
+  }
+
+  it('auto layout: an empty boundary is a visible box at least the minimum size', () => {
+    const result = layoutC4Diagram(parsed());
+    const node = result.nodes.find((n) => n.id === 'empty')!;
+    expect(node.width).toBeGreaterThanOrEqual(EMPTY_BOUNDARY_SIZE.width);
+    expect(node.height).toBeGreaterThanOrEqual(EMPTY_BOUNDARY_SIZE.height);
+    expect(Number.isFinite(node.x) && Number.isFinite(node.y)).toBe(true);
+    expect(result.nodes.map((n) => n.id)).toContain('full');
+    expect(result.width).toBeGreaterThanOrEqual(node.x + node.width);
+    expect(result.height).toBeGreaterThanOrEqual(node.y + node.height);
+  });
+
+  it('auto layout: an empty boundary beside populated ones neither overlaps them nor drifts away', () => {
+    const result = layoutC4Diagram(parsed());
+    const empty = result.nodes.find((n) => n.id === 'empty')!;
+    const full = result.nodes.find((n) => n.id === 'full')!;
+    const overlaps =
+      empty.x < full.x + full.width &&
+      full.x < empty.x + empty.width &&
+      empty.y < full.y + full.height &&
+      full.y < empty.y + empty.height;
+    expect(overlaps).toBe(false);
+    expect(empty.x).toBeLessThan(full.x + full.width + 1000);
+  });
+
+  it('manual layout: keeps its position and the minimum size', () => {
+    const result = layoutC4Diagram(parsed(), undefined, { empty: { x: 500, y: 300 } });
+    const node = result.nodes.find((n) => n.id === 'empty')!;
+    expect(node.x).toBe(500);
+    expect(node.y).toBe(300);
+    expect(node.width).toBeGreaterThanOrEqual(EMPTY_BOUNDARY_SIZE.width);
+    expect(node.height).toBeGreaterThanOrEqual(EMPTY_BOUNDARY_SIZE.height);
+  });
+
+  it('manual layout: a pinned empty boundary beside a populated one is not pushed', () => {
+    const full = layoutC4Diagram(parsed(), undefined, {
+      user: { x: 0, y: 0 },
+      full: { x: 200, y: 0 },
+      api: { x: 240, y: 55 },
+    }).nodes.find((n) => n.id === 'full')!;
+    // Drop the empty boundary within the 40px gap of the populated one.
+    const nearX = full.x + full.width + 10;
+    const result = layoutC4Diagram(parsed(), undefined, {
+      user: { x: 0, y: 0 },
+      full: { x: 200, y: 0 },
+      api: { x: 240, y: 55 },
+      empty: { x: nearX, y: 20 },
+    });
+    const empty = result.nodes.find((n) => n.id === 'empty')!;
+    expect(empty.x).toBe(nearX);
+    expect(empty.y).toBe(20);
+    // ...and nothing that had a manual position moved.
+    expect(result.nodes.find((n) => n.id === 'full')!.x).toBe(200);
+    expect(result.nodes.find((n) => n.id === 'user')!.x).toBe(0);
+    expect(result.nodes.find((n) => n.id === 'api')!.x).toBe(240);
+  });
+
+  it('a plain childless System is not enlarged', () => {
+    const d = createDiagram([createElement('system', 'sys', 'Sys')]);
+    const node = layoutC4Diagram(d).nodes[0];
+    expect(node.height).toBeLessThan(EMPTY_BOUNDARY_SIZE.height);
+  });
+
+  it('an empty boundary nested inside a boundary is laid out inside it', () => {
+    const r = parseC4(`@startuml
+System_Boundary(outer, "Outer") {
+  Boundary(inner, "Inner") {
+  }
+}
+@enduml`);
+    expect(r.errors).toEqual([]);
+    for (const positions of [undefined, { outer: { x: 100, y: 100 }, inner: { x: 140, y: 155 } }]) {
+      const result = layoutC4Diagram(r.diagram!, undefined, positions);
+      const outer = result.nodes.find((n) => n.id === 'outer')!;
+      const inner = result.nodes.find((n) => n.id === 'inner')!;
+      expect(inner.width).toBeGreaterThanOrEqual(EMPTY_BOUNDARY_SIZE.width);
+      expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+      expect(inner.y).toBeGreaterThanOrEqual(outer.y);
+      expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+      expect(inner.y + inner.height).toBeLessThanOrEqual(outer.y + outer.height);
+    }
+  });
+
+  it('grows to contain its first child', () => {
+    const r = parseC4(`@startuml
+System_Boundary(b, "B") {
+  Container(c, "C")
+}
+@enduml`);
+    const result = layoutC4Diagram(r.diagram!, undefined, { b: { x: 100, y: 100 }, c: { x: 140, y: 155 } });
+    const b = result.nodes.find((n) => n.id === 'b')!;
+    const c = result.nodes.find((n) => n.id === 'c')!;
+    expect(b.x).toBe(100);
+    expect(b.y).toBe(100);
+    expect(c.x + c.width).toBeLessThanOrEqual(b.x + b.width);
+    expect(c.y + c.height).toBeLessThanOrEqual(b.y + b.height);
+  });
+
+  it('adding an empty boundary does not move nodes that have manual positions', () => {
+    const before = parseC4(`@startuml
+Person(user, "User")
+System_Boundary(full, "Full") {
+  Container(api, "API")
+}
+@enduml`).diagram!;
+    const pos = { user: { x: 10, y: 20 }, full: { x: 300, y: 40 }, api: { x: 340, y: 95 } };
+    const a = layoutC4Diagram(before, undefined, pos);
+    const b = layoutC4Diagram(parsed(), undefined, { ...pos, empty: { x: 700, y: 60 } });
+    for (const id of ['user', 'full', 'api']) {
+      const na = a.nodes.find((n) => n.id === id)!;
+      const nb = b.nodes.find((n) => n.id === id)!;
+      expect([nb.x, nb.y, nb.width, nb.height]).toEqual([na.x, na.y, na.width, na.height]);
+    }
   });
 });
