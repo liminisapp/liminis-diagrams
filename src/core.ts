@@ -16,6 +16,7 @@ export { applyC4Edit, sanitizeC4Text } from './core/edit';
 export type {
   C4Edit,
   C4AddElementEdit,
+  C4AddBoundaryEdit,
   C4AddRelationshipEdit,
   C4EditErrorCode,
   ApplyC4EditResult,
