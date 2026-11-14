@@ -27,10 +27,13 @@ export {
   C4_ADDABLE_ELEMENT_KINDS,
   C4_ELEMENT_KIND_MACRO,
   C4_DEFAULT_LABELS,
+  C4_ADDABLE_BOUNDARY_KINDS,
+  C4_BOUNDARY_KIND_MACRO,
+  C4_BOUNDARY_DEFAULT_LABELS,
   C4_DEFAULT_RELATIONSHIP_LABEL,
   C4_RESERVED_LEGEND_ID,
 } from './core/alias';
-export type { C4AddableElementKind } from './core/alias';
+export type { C4AddableElementKind, C4AddableBoundaryKind } from './core/alias';
 export { layoutC4Diagram } from './core/layout';
 export { buildClippedEdgePaths, estimateLabelSize } from './core/edge-clipping';
 export {
