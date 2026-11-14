@@ -544,8 +544,11 @@ export function C4InteractiveRenderer({
     [resolvePressTarget],
   );
 
-  const startRenameElement = (id: string) => {
-    if (!canEdit || busyRef.current || draggedNodeIdRef.current !== null || connectSourceId !== null) return;
+  // `afterAbort`: a long-press has just dropped the move-drag it started, but the
+  // ref mirror only catches up on the next render, so that guard must be skipped.
+  const startRenameElement = (id: string, afterAbort = false) => {
+    if (!canEdit || busyRef.current || connectSourceId !== null) return;
+    if (!afterAbort && draggedNodeIdRef.current !== null) return;
     const node = layout.nodes.find((n) => n.id === id);
     if (!node || isBoundary(node.element)) return;
     setRenaming({
@@ -560,8 +563,9 @@ export function C4InteractiveRenderer({
     });
   };
 
-  const startRenameRelationship = (index: number) => {
-    if (!canEdit || busyRef.current || draggedNodeIdRef.current !== null || connectSourceId !== null) return;
+  const startRenameRelationship = (index: number, afterAbort = false) => {
+    if (!canEdit || busyRef.current || connectSourceId !== null) return;
+    if (!afterAbort && draggedNodeIdRef.current !== null) return;
     const rel = diagram.relationships[index];
     const edge = layout.edges.find((e) => e.relationshipIndex === index);
     if (!rel || !edge || edge.points.length < 2) return;
@@ -624,8 +628,8 @@ export function C4InteractiveRenderer({
       // its preview without reporting it, so releasing the finger writes no
       // positions to the host.
       abortMoveDrag();
-      if (press.kind === 'element') startRenameElement(press.id);
-      else if (press.kind === 'relationship') startRenameRelationship(press.index);
+      if (press.kind === 'element') startRenameElement(press.id, true);
+      else if (press.kind === 'relationship') startRenameRelationship(press.index, true);
       else openMenuAt(clientX, clientY, pointerId);
     },
   });
