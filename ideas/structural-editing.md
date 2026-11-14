@@ -143,8 +143,10 @@ package can make the right behaviour easy, but it cannot impose it.
 8. **What comes next: delete, rename, re-parent, edit a relationship?** All are obvious
    followers. The edit union is shaped so that adding them is additive. **Rename is built**
    (#94, ADR-94): the first edit that modifies an existing line, by replacing only a label
-   argument; relationships are targeted by index plus a staleness guard. Delete, re-parent,
-   changing an element's kind and editing description or technology remain open.
+   argument; relationships are targeted by index plus a staleness guard. **Re-parent is built**
+   (#99, ADR-99): the first edit that moves text, by dropping onto a boundary or ⌥-dragging out
+   (touch: tap-select and a Rename / Move out bar). Delete, changing an element's kind and
+   editing description or technology remain open.
 
 ## What would make this worth specifying
 

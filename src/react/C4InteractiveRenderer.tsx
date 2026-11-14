@@ -156,8 +156,11 @@ export interface C4InteractiveRendererProps {
    * (together with `isEditMode`) is what turns the add and connect affordances on;
    * without it the renderer behaves exactly as before.
    *
-   * It also reports a `rename` when the user double-clicks (or, on touch,
-   * long-presses) an element or a relationship label and confirms a new one.
+   * It also reports a `rename` when the user double-clicks an element (on touch:
+   * taps it, then Rename in the action bar) or double-clicks (on touch,
+   * long-presses) a relationship label and confirms a new one, and a `reparent`
+   * when the user drops an element or boundary onto another boundary, ⌥-drags a
+   * child out of its boundary, or (on touch) chooses Move out in the action bar.
    *
    * The renderer never applies the edit and never writes anywhere. The host
    * applies `edit` to its source text (see `applyC4Edit` in `./core`) and stores

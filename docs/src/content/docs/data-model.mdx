@@ -113,7 +113,8 @@ interface LabelRange { start: number; end: number } // [start, end) offsets with
 `labelRange` is where the label argument sits on its line (`args[1]` of an element,
 `args[2]` of a relationship), including its quotes. It is absent when there is no label
 argument or it is a `$named` one. `applyC4Edit`'s `rename` replaces exactly this range.
-`ElementSpan` carries the same optional `labelRange`.
+`ElementSpan` carries the same optional `labelRange`. A re-parent (`{ kind: 'reparent', id,
+parent? }`) moves the lines `line` to `closeLine ?? line` of the moved element.
 
 `closeLine` is absent for a boundary written without braces, as a single-line `{ }`, or
 never closed — exactly the shapes that cannot take a new child by pure insertion. A
