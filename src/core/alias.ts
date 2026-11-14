@@ -7,6 +7,7 @@
  */
 
 import { C4_MACRO_NAMES } from './parser';
+import type { C4Element } from './types';
 
 /**
  * The element kinds that can be added. `*Db` are the cylinder variants.
@@ -79,6 +80,29 @@ export const C4_BOUNDARY_DEFAULT_LABELS: Record<C4AddableBoundaryKind, string> =
   containerBoundary: 'Container boundary',
   boundary: 'Boundary',
 };
+
+/**
+ * Placeholder label for an existing element whose label is cleared. Follows the
+ * add rules for the kinds that can be added (`Database` for a cylinder), and
+ * names the kinds that cannot: `Queue`, and `Boundary` for boundaries and
+ * deployment nodes. Everything else uses its C4 type's name.
+ */
+export function placeholderLabelFor(element: Pick<C4Element, 'type' | 'properties'>): string {
+  const { style, shape } = element.properties;
+  if (style === 'boundary') return 'Boundary';
+  if (shape === 'cylinder') return C4_DEFAULT_LABELS.systemDb;
+  if (shape === 'queue') return 'Queue';
+  switch (element.type) {
+    case 'person':
+      return C4_DEFAULT_LABELS.person;
+    case 'container':
+      return C4_DEFAULT_LABELS.container;
+    case 'component':
+      return C4_DEFAULT_LABELS.component;
+    default:
+      return C4_DEFAULT_LABELS.system;
+  }
+}
 
 /** Label given to a relationship created by dragging from one element to another. */
 export const C4_DEFAULT_RELATIONSHIP_LABEL = 'Uses';

@@ -315,6 +315,61 @@ describe('C4Playground structural editing', () => {
     expect(rects()).toEqual(r); // nothing moved
   });
 
+  /** The lines of `before` and `after` that differ; they must be the same length. */
+  function changedLines(before: string, after: string): [string, string][] {
+    const b = before.split('\n');
+    const a = after.split('\n');
+    expect(a.length).toBe(b.length);
+    return b.flatMap((line, i): [string, string][] => (line === a[i] ? [] : [[line, a[i]]]));
+  }
+
+  it('renames an element by double-click: one line, only the label, position kept', () => {
+    const { c, source, rects } = setup();
+    const before = source();
+    const rectsBefore = rects();
+    fireEvent.doubleClick(c.querySelector('[data-node-id="api"]')!);
+    const input = c.querySelector<HTMLInputElement>('[data-c4-label-input]')!;
+    expect(input.value).toBe('API');
+    fireEvent.change(input, { target: { value: 'Gateway' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(changedLines(before, source())).toEqual([
+      ['  Container(api, "API", "Go")', '  Container(api, "Gateway", "Go")'],
+    ]);
+    // Text and positions arrive in one update: nothing moved, and the new label is drawn.
+    expect(rects()).toEqual(rectsBefore);
+    expect(c.querySelector('svg')!.textContent).toContain('Gateway');
+  });
+
+  it('renames a relationship by double-click, keeping its direction variant and technology', () => {
+    const { c, source, rects } = setup();
+    const before = source();
+    const rectsBefore = rects();
+    fireEvent.doubleClick(c.querySelector('[data-rel-index="0"]')!);
+    const input = c.querySelector<HTMLInputElement>('[aria-label="Relationship label"]')!;
+    expect(input.value).toBe('Uses'); // not "Uses [HTTPS]"
+    fireEvent.change(input, { target: { value: 'Calls' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(changedLines(before, source())).toEqual([
+      ['Rel_D(user, api, "Uses", "HTTPS")', 'Rel_D(user, api, "Calls", "HTTPS")'],
+    ]);
+    expect(source()).toContain("' people");
+    expect(rects()).toEqual(rectsBefore);
+    expect(c.querySelector('svg')!.textContent).toContain('Calls');
+  });
+
+  it('renames twice in a row: the second edit is built from the updated source', () => {
+    const { c, source } = setup();
+    for (const label of ['One', 'Two']) {
+      fireEvent.doubleClick(c.querySelector('[data-rel-index="0"]')!);
+      const input = c.querySelector<HTMLInputElement>('[aria-label="Relationship label"]')!;
+      fireEvent.change(input, { target: { value: label } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    }
+    expect(source()).toContain('Rel_D(user, api, "Two", "HTTPS")');
+  });
+
   it('shows the reason when an edit cannot be applied, and changes nothing', () => {
     cleanup();
     measureAs(800, 600);

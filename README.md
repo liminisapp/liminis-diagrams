@@ -92,7 +92,7 @@ Pass `onEdit` as well (and keep `isEditMode` on) and the renderer offers a right
 an element, or an empty boundary (a separate group in the same menu) that you can then add
 elements into, and a handle on each element to drag a relationship to another one. It
 **reports** each as an edit; it never changes your source. `applyC4Edit` turns the edit
-into new source text — exactly one inserted block (one line, or two for a boundary), nothing else touched — and you store it:
+into new source text — exactly one inserted block (one line, or two for a boundary) or, for a rename, one replaced label, nothing else touched — and you store it:
 
 ```tsx
 import { applyC4Edit } from '@liminis/diagrams/core';
@@ -111,6 +111,12 @@ import { applyC4Edit } from '@liminis/diagrams/core';
   }}
 />
 ```
+
+The same callback reports a **rename**: double-click an element, or a relationship's label
+(long-press on touch), edit the label inline, and `onEdit` receives
+`{ kind: 'rename', target, label }`. `applyC4Edit` replaces only that label argument — the
+alias, description, technology, `Rel_D`-style variant and trailing comment stay byte-identical,
+so manual positions keep matching.
 
 See [Recipe 4](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities)
 for the host's responsibilities. Available from the release after 0.1.6.

@@ -72,8 +72,17 @@ export interface C4Relationship {
   sourceId: string;
   /** Target element id */
   targetId: string;
-  /** Relationship label (e.g., "JSON/HTTPS", "SQL/TCP") */
+  /**
+   * Relationship label (e.g., "JSON/HTTPS", "SQL/TCP"). When the source gives a
+   * technology argument this is the combined `label [technology]` string.
+   */
   label: string;
+  /**
+   * The technology argument, only present when the source gives a non-empty one.
+   * Lets a caller recover the bare label (`label` minus the ` [technology]`
+   * suffix) without guessing at brackets.
+   */
+  technology?: string;
 }
 
 /**
@@ -132,6 +141,12 @@ export interface LayoutEdge {
   points: Point[];
   /** Edge label */
   label: string;
+  /**
+   * Index of the relationship in `diagram.relationships` this edge draws.
+   * `edges[i]` is not always `relationships[i]`: a relationship with an
+   * unknown endpoint produces no edge.
+   */
+  relationshipIndex?: number;
 }
 
 /**
@@ -194,6 +209,12 @@ export interface ParseResult {
   errors: ParseError[];
 }
 
+/** A half-open character range `[start, end)` within one source line. */
+export interface LabelRange {
+  start: number;
+  end: number;
+}
+
 /**
  * Where an element sits in the source text. Lines are 0-based.
  */
@@ -207,6 +228,13 @@ export interface ElementSpan {
   closeLine?: number;
   /** Id of the enclosing boundary, undefined at the top level */
   parent?: string;
+  /**
+   * Character range of the label argument (`args[1]`) within the raw source
+   * line, `end` exclusive, covering the argument's trimmed text including any
+   * quotes. Absent when the line has no label argument or it is a `$named`
+   * argument.
+   */
+  labelRange?: LabelRange;
 }
 
 /**
@@ -216,6 +244,11 @@ export interface RelationshipSpan {
   line: number;
   /** Id of the enclosing boundary, undefined at the top level */
   parent?: string;
+  /**
+   * Character range of the label argument (`args[2]`) within the raw source
+   * line, `end` exclusive. Absent for a `$named` argument.
+   */
+  labelRange?: LabelRange;
 }
 
 /**

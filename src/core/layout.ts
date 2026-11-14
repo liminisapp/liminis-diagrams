@@ -425,7 +425,7 @@ function calculateEdges(
     pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
   }
 
-  for (const rel of relationships) {
+  for (const [relationshipIndex, rel] of relationships.entries()) {
     const sourceNode = nodeMap.get(rel.sourceId);
     const targetNode = nodeMap.get(rel.targetId);
 
@@ -482,6 +482,7 @@ function calculateEdges(
       target: rel.targetId,
       points: [sourcePoint, targetPoint],
       label: rel.label,
+      relationshipIndex,
     });
   }
 

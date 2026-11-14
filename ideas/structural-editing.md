@@ -141,8 +141,10 @@ package can make the right behaviour easy, but it cannot impose it.
    error, so there is nothing to click. Structural editing is presumably disabled until the
    text parses again.
 8. **What comes next: delete, rename, re-parent, edit a relationship?** All are obvious
-   followers, and none is asked for yet. The edit union should be shaped so that adding them
-   later is additive.
+   followers. The edit union is shaped so that adding them is additive. **Rename is built**
+   (#94, ADR-94): the first edit that modifies an existing line, by replacing only a label
+   argument; relationships are targeted by index plus a staleness guard. Delete, re-parent,
+   changing an element's kind and editing description or technology remain open.
 
 ## What would make this worth specifying
 
