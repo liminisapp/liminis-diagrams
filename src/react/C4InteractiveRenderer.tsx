@@ -1041,7 +1041,9 @@ function C4InteractiveSvg({
                   x2={last.x}
                   y2={last.y}
                   strokeWidth={16}
-                  strokeLinecap="round"
+                  // Butt caps: edge points sit on the node borders, so round caps
+                  // would protrude into the nodes and steal their move-drag.
+                  strokeLinecap="butt"
                 />
               );
             })}
