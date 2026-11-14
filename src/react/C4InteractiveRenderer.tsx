@@ -21,10 +21,12 @@ import {
   C4_DEFAULT_LABELS,
   C4_DEFAULT_RELATIONSHIP_LABEL,
   generateC4Alias,
+  placeholderLabelFor,
   type C4AddableBoundaryKind,
   type C4AddableElementKind,
 } from '../core/alias';
-import { sanitizeC4Text, type C4Edit } from '../core/edit';
+import { sanitizeC4Text, type C4Edit, type C4RelationshipTarget } from '../core/edit';
+import { estimateLabelSize } from '../core/edge-clipping';
 import { useC4DiagramDrag } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import { findBoundaryAt, findElementAt } from './hit-test';
@@ -74,6 +76,42 @@ interface PendingRel {
   y: number;
 }
 
+/** A label being renamed in place. Nothing is reported until it is confirmed. */
+type RenameState =
+  | {
+      kind: 'element';
+      id: string;
+      /** The node's rectangle, in SVG space: the input covers it. */
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      /** What the input is prefilled with, and what "unchanged" means */
+      current: string;
+      /** Used when the confirmed label is empty */
+      fallback: string;
+    }
+  | {
+      kind: 'relationship';
+      target: C4RelationshipTarget;
+      /** Midpoint of the edge, in SVG space: where the input appears. */
+      x: number;
+      y: number;
+      current: string;
+    };
+
+/** What a long-press resolved to when it started. */
+type PressTarget =
+  | { kind: 'element'; id: string }
+  | { kind: 'relationship'; index: number }
+  | { kind: 'menu' };
+
+/** The label argument as written: `label` without the ` [technology]` the parser appends. */
+function rawRelationshipLabel(rel: { label: string; technology?: string }): string {
+  const suffix = rel.technology ? ` [${rel.technology}]` : '';
+  return suffix && rel.label.endsWith(suffix) ? rel.label.slice(0, -suffix.length) : rel.label;
+}
+
 /** An element or empty boundary that has been placed and is waiting for its label. */
 type PendingAdd = {
   parent?: string;
@@ -106,6 +144,9 @@ export interface C4InteractiveRendererProps {
    * Called when the user adds an element or connects two elements. Providing it
    * (together with `isEditMode`) is what turns the add and connect affordances on;
    * without it the renderer behaves exactly as before.
+   *
+   * It also reports a `rename` when the user double-clicks (or, on touch,
+   * long-presses) an element or a relationship label and confirms a new one.
    *
    * The renderer never applies the edit and never writes anywhere. The host
    * applies `edit` to its source text (see `applyC4Edit` in `./core`) and stores
@@ -210,6 +251,8 @@ export function C4InteractiveRenderer({
   const [pending, setPending] = useState<PendingAdd | null>(null);
   // Released connection waiting for its label; likewise nothing is reported until confirmed.
   const [pendingRel, setPendingRel] = useState<PendingRel | null>(null);
+  // Label being renamed in place; likewise nothing is reported until confirmed.
+  const [renaming, setRenaming] = useState<RenameState | null>(null);
 
   // Local positions during drag (merged with persisted positions)
   const [dragPositions, setDragPositions] = useState<Record<string, { x: number; y: number }>>({});
@@ -398,7 +441,7 @@ export function C4InteractiveRenderer({
   const draggedNodeIdRef = useRef<string | null>(null);
   draggedNodeIdRef.current = draggedNodeId;
   const busyRef = useRef(false);
-  busyRef.current = menu !== null || pending !== null || pendingRel !== null;
+  busyRef.current = menu !== null || pending !== null || pendingRel !== null || renaming !== null;
 
   const { connectSourceId, connectPointer, startConnect } = useC4ConnectDrag({
     svgRef,
@@ -437,6 +480,7 @@ export function C4InteractiveRenderer({
       setMenu(null);
       setPending(null);
       setPendingRel(null);
+      setRenaming(null);
     }
   }, [canEdit]);
 
@@ -463,23 +507,88 @@ export function C4InteractiveRenderer({
     [layout.nodes],
   );
 
-  /** Where the menu may open: empty canvas or inside a boundary, not on an element, handle or legend. */
-  const isMenuTarget = useCallback(
-    (target: EventTarget | null, clientX: number, clientY: number): boolean => {
-      if (!(target instanceof Element)) return false;
-      if (target.closest('[data-connect-handle]')) return false;
-      if (target.closest(`[data-node-id="${LEGEND_POSITION_ID}"]`)) return false;
-      const svg = svgRef.current;
-      const ctm = svg?.getScreenCTM();
-      if (!svg || !ctm) return false;
-      const pt = svg.createSVGPoint();
-      pt.x = clientX;
-      pt.y = clientY;
-      const p = pt.matrixTransform(ctm.inverse());
-      return findElementAt(layout.nodes, p) === null;
+  /** A client point in SVG space, or null when the SVG is not measurable. */
+  const toSvgPoint = useCallback((clientX: number, clientY: number): Point | null => {
+    const svg = svgRef.current;
+    const ctm = svg?.getScreenCTM();
+    if (!svg || !ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    return pt.matrixTransform(ctm.inverse());
+  }, []);
+
+  /**
+   * What a press at this point means: a relationship label, an element, the add
+   * menu (empty canvas or a boundary), or nothing (a handle or the legend).
+   */
+  const resolvePressTarget = useCallback(
+    (target: EventTarget | null, clientX: number, clientY: number): PressTarget | null => {
+      if (!(target instanceof Element)) return null;
+      if (target.closest('[data-connect-handle]')) return null;
+      if (target.closest(`[data-node-id="${LEGEND_POSITION_ID}"]`)) return null;
+      const relHit = target.closest('[data-rel-index]');
+      if (relHit) return { kind: 'relationship', index: Number(relHit.getAttribute('data-rel-index')) };
+      const p = toSvgPoint(clientX, clientY);
+      if (!p) return null;
+      const element = findElementAt(layout.nodes, p);
+      return element ? { kind: 'element', id: element.id } : { kind: 'menu' };
     },
-    [layout.nodes],
+    [layout.nodes, toSvgPoint],
   );
+
+  /** Where the menu may open: empty canvas or inside a boundary, not on an element, handle, legend or relationship label. */
+  const isMenuTarget = useCallback(
+    (target: EventTarget | null, clientX: number, clientY: number): boolean =>
+      resolvePressTarget(target, clientX, clientY)?.kind === 'menu',
+    [resolvePressTarget],
+  );
+
+  const startRenameElement = (id: string) => {
+    if (!canEdit || busyRef.current || draggedNodeIdRef.current !== null || connectSourceId !== null) return;
+    const node = layout.nodes.find((n) => n.id === id);
+    if (!node || isBoundary(node.element)) return;
+    setRenaming({
+      kind: 'element',
+      id,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      current: node.element.name,
+      fallback: placeholderLabelFor(node.element),
+    });
+  };
+
+  const startRenameRelationship = (index: number) => {
+    if (!canEdit || busyRef.current || draggedNodeIdRef.current !== null || connectSourceId !== null) return;
+    const rel = diagram.relationships[index];
+    const edge = layout.edges.find((e) => e.relationshipIndex === index);
+    if (!rel || !edge || edge.points.length < 2) return;
+    const first = edge.points[0];
+    const last = edge.points[edge.points.length - 1];
+    setRenaming({
+      kind: 'relationship',
+      target: { index, sourceId: rel.sourceId, targetId: rel.targetId, label: rel.label },
+      x: (first.x + last.x) / 2,
+      y: (first.y + last.y) / 2,
+      current: rawRelationshipLabel(rel),
+    });
+  };
+
+  const handleConfirmRename = (value: string) => {
+    if (!renaming) return;
+    const state = renaming;
+    setRenaming(null);
+    const label =
+      sanitizeC4Text(value) ||
+      (state.kind === 'element' ? state.fallback : C4_DEFAULT_RELATIONSHIP_LABEL);
+    // Nothing to say if it reads the same as it did.
+    if (label === state.current) return;
+    const target =
+      state.kind === 'element' ? { element: state.id } : { relationship: state.target };
+    onEdit?.({ kind: 'rename', target, label }, { positions: buildPositions() });
+  };
 
   const abortMoveDrag = () => {
     if (draggedNodeIdRef.current === null) return;
@@ -495,18 +604,29 @@ export function C4InteractiveRenderer({
     dragStartPositionsRef.current = {};
   };
 
+  // What the press in flight resolved to when it started.
+  const pressTargetRef = useRef<PressTarget | null>(null);
+
   const { onPointerDownCapture: onLongPressPointerDown } = useC4LongPress({
     enabled: canEdit,
-    shouldStart: (e) =>
-      draggedNodeIdRef.current === null &&
-      !busyRef.current &&
-      isMenuTarget(e.target, e.clientX, e.clientY),
+    shouldStart: (e) => {
+      pressTargetRef.current = null;
+      if (draggedNodeIdRef.current !== null || busyRef.current) return false;
+      pressTargetRef.current = resolvePressTarget(e.target, e.clientX, e.clientY);
+      return pressTargetRef.current !== null;
+    },
     onLongPress: ({ clientX, clientY, pointerId }) => {
-      // A press on a boundary also started a move-drag on its hit rect. The menu
-      // takes the pointer over: drop that drag and its preview without reporting
-      // it, so releasing the finger writes no positions to the host.
+      const press = pressTargetRef.current;
+      pressTargetRef.current = null;
+      if (!press) return;
+      // A press on a node or a boundary also started a move-drag on its hit rect.
+      // The menu or the rename input takes the pointer over: drop that drag and
+      // its preview without reporting it, so releasing the finger writes no
+      // positions to the host.
       abortMoveDrag();
-      openMenuAt(clientX, clientY, pointerId);
+      if (press.kind === 'element') startRenameElement(press.id);
+      else if (press.kind === 'relationship') startRenameRelationship(press.index);
+      else openMenuAt(clientX, clientY, pointerId);
     },
   });
 
@@ -620,6 +740,7 @@ export function C4InteractiveRenderer({
               menu,
               pending,
               pendingRel,
+              renaming,
               connectSourceId,
               connectPointer,
               onLongPressPointerDown,
@@ -631,6 +752,10 @@ export function C4InteractiveRenderer({
               onCancelLabel: () => setPending(null),
               onConfirmRelLabel: handleConfirmRelLabel,
               onCancelRelLabel: () => setPendingRel(null),
+              onRenameElement: startRenameElement,
+              onRenameRelationship: startRenameRelationship,
+              onConfirmRename: handleConfirmRename,
+              onCancelRename: () => setRenaming(null),
             }
           : null
       }
@@ -662,6 +787,7 @@ interface EditingProps {
   menu: MenuState | null;
   pending: PendingAdd | null;
   pendingRel: PendingRel | null;
+  renaming: RenameState | null;
   connectSourceId: string | null;
   connectPointer: Point | null;
   onLongPressPointerDown: (e: React.PointerEvent) => void;
@@ -673,6 +799,10 @@ interface EditingProps {
   onCancelLabel: () => void;
   onConfirmRelLabel: (value: string) => void;
   onCancelRelLabel: () => void;
+  onRenameElement: (id: string) => void;
+  onRenameRelationship: (index: number) => void;
+  onConfirmRename: (value: string) => void;
+  onCancelRename: () => void;
 }
 
 /** Width of the relationship label input, in px. */
@@ -767,7 +897,16 @@ function C4InteractiveSvg({
       : null;
   const accent = 'var(--c4-accent, #3b82f6)';
   const gesturesIdle =
-    editing !== null && editing.menu === null && editing.pending === null && editing.pendingRel === null;
+    editing !== null &&
+    editing.menu === null &&
+    editing.pending === null &&
+    editing.pendingRel === null &&
+    editing.renaming === null;
+  // Elements that can be renamed by double-click: everything but boundaries and the legend.
+  const renamableIds = useMemo(
+    () => new Set(layout.nodes.filter((n) => !isBoundary(n.element)).map((n) => n.id)),
+    [layout.nodes],
+  );
   const pendingRelNodes = editing?.pendingRel
     ? {
         source: layout.nodes.find((n) => n.id === editing.pendingRel!.sourceId),
@@ -829,6 +968,11 @@ function C4InteractiveSvg({
                   touchAction: 'none',
                 }}
                 onPointerDown={(e) => onNodeMouseDown(area.id, area.x, area.y, e)}
+                // Only where rename exists; otherwise the browser's own
+                // double-click behaviour is left alone.
+                onDoubleClick={
+                  editing && renamableIds.has(area.id) ? () => editing.onRenameElement(area.id) : undefined
+                }
               />
             ))}
           </g>
@@ -846,6 +990,57 @@ function C4InteractiveSvg({
                 isDragging={draggedNodeId === area.id}
               />
             ))}
+          </g>
+        )}
+
+        {/* Relationship label targets: above the node rects (so a label over a
+            boundary does not start a boundary move-drag), below the connect
+            handles. The rendered text can be a legend letter or a step number,
+            so the target is geometric: a box at the label's anchor, or a wide
+            invisible stroke along the line when there is no label to hit. */}
+        {gesturesIdle && (
+          <g className="relationship-targets-layer">
+            {layout.edges.map((edge, i) => {
+              if (edge.relationshipIndex === undefined || edge.points.length < 2) return null;
+              const first = edge.points[0];
+              const last = edge.points[edge.points.length - 1];
+              const common = {
+                'data-rel-index': edge.relationshipIndex,
+                fill: 'transparent',
+                stroke: 'transparent',
+                style: { cursor: 'text', touchAction: 'none' } as const,
+                onDoubleClick: () => editing.onRenameRelationship(edge.relationshipIndex!),
+              };
+              if (edge.label) {
+                const { halfW, halfH } = estimateLabelSize(edge.label, 12);
+                const w = Math.min(Math.max(halfW, 20), 100);
+                const h = Math.max(halfH, 12);
+                const cx = (first.x + last.x) / 2;
+                const cy = (first.y + last.y) / 2;
+                return (
+                  <rect
+                    key={`rel-${i}`}
+                    {...common}
+                    x={cx - w}
+                    y={cy - h}
+                    width={w * 2}
+                    height={h * 2}
+                  />
+                );
+              }
+              return (
+                <line
+                  key={`rel-${i}`}
+                  {...common}
+                  x1={first.x}
+                  y1={first.y}
+                  x2={last.x}
+                  y2={last.y}
+                  strokeWidth={16}
+                  strokeLinecap="round"
+                />
+              );
+            })}
           </g>
         )}
 
@@ -981,6 +1176,34 @@ function C4InteractiveSvg({
             isDarkMode={isDarkMode}
             onConfirm={editing.onConfirmLabel}
             onCancel={editing.onCancelLabel}
+          />
+        )}
+        {editing.renaming?.kind === 'element' && (
+          <LabelInput
+            // Remounted per target so a new rename never inherits a settled input.
+            key={`rename-${editing.renaming.id}`}
+            left={(editing.renaming.x - layout.viewBoxX) * scale}
+            top={(editing.renaming.y - layout.viewBoxY) * scale}
+            width={editing.renaming.width * scale}
+            height={editing.renaming.height * scale}
+            initialValue={editing.renaming.current}
+            isDarkMode={isDarkMode}
+            onConfirm={editing.onConfirmRename}
+            onCancel={editing.onCancelRename}
+          />
+        )}
+        {editing.renaming?.kind === 'relationship' && (
+          <LabelInput
+            key={`rename-rel-${editing.renaming.target.index}`}
+            left={(editing.renaming.x - layout.viewBoxX) * scale - REL_LABEL_WIDTH / 2}
+            top={(editing.renaming.y - layout.viewBoxY) * scale - 14}
+            width={REL_LABEL_WIDTH}
+            height={28}
+            ariaLabel="Relationship label"
+            initialValue={editing.renaming.current}
+            isDarkMode={isDarkMode}
+            onConfirm={editing.onConfirmRename}
+            onCancel={editing.onCancelRename}
           />
         )}
         {editing.pendingRel && (

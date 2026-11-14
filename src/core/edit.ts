@@ -551,7 +551,8 @@ function applyRename(
   } else {
     const t = target.relationship;
     const rel = Number.isInteger(t.index) ? diagram.relationships[t.index] : undefined;
-    if (!rel || rel.sourceId !== t.sourceId || rel.targetId !== t.targetId || rel.label !== t.label) {
+    const matches = rel?.sourceId === t.sourceId && rel.targetId === t.targetId && rel.label === t.label;
+    if (!rel || !matches) {
       return fail(
         'stale-target',
         'The relationship at that position no longer matches the source; re-read it and try again',
