@@ -87,19 +87,23 @@
   display: flex;
 }
 
-/* Centred with auto margins, never `justify-content`/`align-items: center`.
-   Those centre the overflow too: a diagram wider than the pane spills equally
-   left and right, and the left half cannot be scrolled to — the scroll origin
-   is the container's start edge, which the centring has already moved content
-   past. It reads as a diagram with its left side cut off and no way to reach
-   it, because that is exactly what it is.
+/* Pinned to the top, centred horizontally with auto *inline* margins. Never
+   `justify-content`/`align-items: center`: those centre the overflow too, so a
+   diagram wider than the pane spills equally left and right, and the left half
+   cannot be scrolled to — the scroll origin is the container's start edge, which
+   the centring has already moved content past. It reads as a diagram with its
+   left side cut off and no way to reach it, because that is exactly what it is.
 
    Auto margins collapse to zero once there is no free space, so the same rule
-   centres a small diagram and lets a large one start at its true origin and
+   centres a narrow diagram and lets a wide one start at its true origin and
    scroll. The child here is the renderer's own positioning wrapper, not the
    <svg>: that wrapper is the flex item, which is why a `max-width` on the svg
-   never constrained anything. */
-.c4-playground__canvas > * { margin: auto; }
+   never constrained anything.
+
+   No vertical centring (ADR-100). Anything that changed the pane's height or
+   the diagram's height — a menu opening, a drag growing the canvas — moved the
+   whole picture by half the change. Hosts anchor the diagram top-left anyway. */
+.c4-playground__canvas > * { margin: 0 auto; }
 
 /* Lightbox. The first attempt was inset:0 with no backdrop — a takeover, not a
    modal. The second used absolute + inset on the panel, which let the content

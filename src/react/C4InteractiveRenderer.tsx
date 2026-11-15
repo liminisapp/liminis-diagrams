@@ -1004,6 +1004,14 @@ const CONNECT_HANDLE_HIT_RADIUS = 16;
 /**
  * SVG wrapper that adds interactive overlays for drag handling.
  */
+interface SvgFrame {
+  viewBoxX: number;
+  viewBoxY: number;
+  svgWidth: number;
+  svgHeight: number;
+  scale: number;
+}
+
 function C4InteractiveSvg({
   layout,
   isDarkMode,
@@ -1018,7 +1026,7 @@ function C4InteractiveSvg({
 }: C4InteractiveSvgProps): JSX.Element {
   // Guarded here as well as in C4Renderer: both are public entry points, and a
   // host reaching this one never passes through the other.
-  const scale = normaliseZoom(zoom);
+  const liveScale = normaliseZoom(zoom);
   // Get colors based on theme
   const handleColor = isDarkMode ? '#a0a0a0' : '#505050';
 
@@ -1064,7 +1072,7 @@ function C4InteractiveSvg({
 
   // Compute SVG dimensions that include potential legend overflow,
   // mirroring the behavior of the non-interactive C4Renderer.
-  const { svgWidth, svgHeight } = useMemo(() => {
+  const liveFrame = useMemo<SvgFrame>(() => {
     let w = layout.width;
     let h = layout.height;
     if (legendInfo) {
@@ -1075,8 +1083,45 @@ function C4InteractiveSvg({
       if (legendRight > w) w = legendRight;
       if (legendBottom > h) h = legendBottom;
     }
-    return { svgWidth: w, svgHeight: h };
-  }, [layout.width, layout.height, layout.viewBoxX, layout.viewBoxY, legendInfo, legendPositionOverride]);
+    return {
+      viewBoxX: layout.viewBoxX,
+      viewBoxY: layout.viewBoxY,
+      svgWidth: w,
+      svgHeight: h,
+      scale: liveScale,
+    };
+  }, [
+    layout.width,
+    layout.height,
+    layout.viewBoxX,
+    layout.viewBoxY,
+    legendInfo,
+    legendPositionOverride,
+    liveScale,
+  ]);
+
+  // Freeze the frame for the whole of a drag (ADR-100).
+  //
+  // `layout` keeps updating live while a node is dragged, so a drag past the top
+  // or left edge makes `viewBoxX/Y` negative and grows the SVG. The pointer-to-SVG
+  // mapping is locked at drag start (`useC4DiagramDrag`) to avoid a feedback loop,
+  // so if the SVG's size or origin moved on screen the node would drift away from
+  // the pointer and every other node would appear to slide. Holding the frame
+  // constant keeps that locked mapping valid for the whole drag; the dragged node
+  // is drawn past the frozen edges (`overflow: visible`) and the frame is
+  // recomputed exactly once, on the first render after the drag ends.
+  //
+  // The ref holds the last frame rendered while no drag was active. The render
+  // that first sees `draggedNodeId` set still has the pre-drag layout, because
+  // `dragPositions` only changes on a later animation frame, so nothing needs to
+  // be captured in an event handler.
+  const frameRef = useRef<SvgFrame>(liveFrame);
+  const dragging = draggedNodeId !== null;
+  if (!dragging) frameRef.current = liveFrame;
+  const frame = dragging ? frameRef.current : liveFrame;
+  const { svgWidth, svgHeight, scale } = frame;
+  const viewBoxX = frame.viewBoxX;
+  const viewBoxY = frame.viewBoxY;
 
   const connectSource = editing?.connectSourceId
     ? layout.nodes.find((n) => n.id === editing.connectSourceId)
@@ -1112,7 +1157,7 @@ function C4InteractiveSvg({
         ref={svgRef}
         width={svgWidth * scale}
         height={svgHeight * scale}
-        viewBox={`${layout.viewBoxX} ${layout.viewBoxY} ${svgWidth} ${svgHeight}`}
+        viewBox={`${viewBoxX} ${viewBoxY} ${svgWidth} ${svgHeight}`}
         xmlns="http://www.w3.org/2000/svg"
         data-diagram="c4"
         // Capture phase: a press on a boundary also starts a move-drag, whose own
@@ -1129,6 +1174,8 @@ function C4InteractiveSvg({
         style={{
           fontFamily: 'system-ui, -apple-system, sans-serif',
           cursor: isEditMode ? (draggedNodeId ? 'grabbing' : 'default') : 'default',
+          // The frame is frozen during a drag, so the dragged node can leave it.
+          ...(dragging ? { overflow: 'visible' } : {}),
           // A long-press must open the menu, not the browser's text-selection and
           // callout. Edit mode with a callback only; read-only renders keep defaults.
           ...(editing ? { WebkitTouchCallout: 'none', userSelect: 'none', WebkitUserSelect: 'none' } : {}),
@@ -1383,8 +1430,8 @@ function C4InteractiveSvg({
         {selectedNode && gesturesIdle && editing.dropTarget === null && draggedNodeId === null && (
           <ActionBar
             // Below the node, clear of the finger that tapped it.
-            left={(selectedNode.x - layout.viewBoxX) * scale}
-            top={(selectedNode.y + selectedNode.height - layout.viewBoxY) * scale + 8}
+            left={(selectedNode.x - viewBoxX) * scale}
+            top={(selectedNode.y + selectedNode.height - viewBoxY) * scale + 8}
             isDarkMode={isDarkMode}
             canRename={!isBoundary(selectedNode.element)}
             canMoveOut={selectedNode.element.parent !== undefined}
@@ -1395,8 +1442,8 @@ function C4InteractiveSvg({
         {editing.menu && (
           <EditMenu
             // Offset from the point so a finger that opened it is not under an item.
-            left={(editing.menu.x - layout.viewBoxX) * scale + 8}
-            top={(editing.menu.y - layout.viewBoxY) * scale + 8}
+            left={(editing.menu.x - viewBoxX) * scale + 8}
+            top={(editing.menu.y - viewBoxY) * scale + 8}
             isDarkMode={isDarkMode}
             originPointerId={editing.menu.pointerId}
             onSelect={editing.onSelectKind}
@@ -1405,8 +1452,8 @@ function C4InteractiveSvg({
         )}
         {editing.pending && (
           <LabelInput
-            left={(editing.pending.x - layout.viewBoxX) * scale}
-            top={(editing.pending.y - layout.viewBoxY) * scale}
+            left={(editing.pending.x - viewBoxX) * scale}
+            top={(editing.pending.y - viewBoxY) * scale}
             width={editing.pending.width * scale}
             // A boundary's label sits in its header, not over the whole (large, mostly empty) box.
             height={
@@ -1423,8 +1470,8 @@ function C4InteractiveSvg({
           <LabelInput
             // Remounted per target so a new rename never inherits a settled input.
             key={`rename-${editing.renaming.id}`}
-            left={(editing.renaming.x - layout.viewBoxX) * scale}
-            top={(editing.renaming.y - layout.viewBoxY) * scale}
+            left={(editing.renaming.x - viewBoxX) * scale}
+            top={(editing.renaming.y - viewBoxY) * scale}
             width={editing.renaming.width * scale}
             height={editing.renaming.height * scale}
             initialValue={editing.renaming.current}
@@ -1436,8 +1483,8 @@ function C4InteractiveSvg({
         {editing.renaming?.kind === 'relationship' && (
           <LabelInput
             key={`rename-rel-${editing.renaming.target.index}`}
-            left={(editing.renaming.x - layout.viewBoxX) * scale - REL_LABEL_WIDTH / 2}
-            top={(editing.renaming.y - layout.viewBoxY) * scale - 14}
+            left={(editing.renaming.x - viewBoxX) * scale - REL_LABEL_WIDTH / 2}
+            top={(editing.renaming.y - viewBoxY) * scale - 14}
             width={REL_LABEL_WIDTH}
             height={28}
             ariaLabel="Relationship label"
@@ -1449,8 +1496,8 @@ function C4InteractiveSvg({
         )}
         {editing.pendingRel && (
           <LabelInput
-            left={(editing.pendingRel.x - layout.viewBoxX) * scale - REL_LABEL_WIDTH / 2}
-            top={(editing.pendingRel.y - layout.viewBoxY) * scale - 14}
+            left={(editing.pendingRel.x - viewBoxX) * scale - REL_LABEL_WIDTH / 2}
+            top={(editing.pendingRel.y - viewBoxY) * scale - 14}
             width={REL_LABEL_WIDTH}
             height={28}
             ariaLabel="Relationship label"
