@@ -503,19 +503,57 @@ describe('zoom-to-fit: the scale changes live', () => {
       await g.release(1200 - g.grabAt.x, 0);
     });
 
-    it('release and cancel clear the pause and the transform', async () => {
+    // Drive a drag into the capped state: approach from inside so the scale has
+    // changed, then hold near the edge. Returns the frame while paused.
+    const driveIntoCap = async (g: ReturnType<typeof grab>, frame: () => unknown) => {
+      for (const x of [400, 600, 700]) {
+        await g.to(x - g.grabAt.x, 0);
+        await settle();
+      }
+      await g.to(NEAR_EDGE(g), 0);
+      await settle();
+      const paused = JSON.stringify(frame());
+      // Further moves inside the margin pull the node out further, yet the frame
+      // is held: that is the pause, observed.
+      await g.to(NEAR_EDGE(g), 200);
+      await settle();
+      expect(JSON.stringify(frame())).toBe(paused);
+      return paused;
+    };
+
+    it('Escape while paused restores the pre-drag frame, clears the transform, and the next drag is not paused', async () => {
       const onEdit = vi.fn();
       const { container, svg, frame } = fitSetup({ overrides: { onEdit } });
       const frameBefore = frame();
       const g = grab(container, 'web');
-      for (const x of [400, 700, 790]) {
-        await g.to(x - g.grabAt.x, 0);
-        await settle();
-      }
+      await driveIntoCap(g, frame);
       fireEvent.keyDown(window, { key: 'Escape' });
       await settle();
       expect(svg.style.transform).toBe('');
       expect(frame()).toEqual(frameBefore);
+
+      // A fresh drag must grow the frame on its first move, not inherit the pause.
+      const g2 = grab(container, 'web');
+      await g2.to(-200, 0);
+      await settle();
+      expect(frame()).not.toEqual(frameBefore);
+      await g2.release(-200, 0);
+    });
+
+    it('release while paused clears the transform, and the next drag is not paused', async () => {
+      const { container, svg, frame } = fitSetup();
+      const g = grab(container, 'web');
+      await driveIntoCap(g, frame);
+      await g.release(NEAR_EDGE(g), 200);
+      await settle();
+      expect(svg.style.transform).toBe('');
+
+      const before = JSON.stringify(frame());
+      const g2 = grab(container, 'web');
+      await g2.to(-200, 0);
+      await settle();
+      expect(JSON.stringify(frame())).not.toBe(before);
+      await g2.release(-200, 0);
     });
   });
 });

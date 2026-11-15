@@ -1201,7 +1201,10 @@ function C4InteractiveSvg({
   // `getScreenCTM()` includes a CSS transform (WebKit has been inconsistent), and
   // the result is the real position, so host centring needs no special case.
   // Imperative on purpose: React's style diffing never touches it.
-  const originStartRef = useRef<{ x: number; y: number } | null>(null);
+  // `null`: no drag yet. `false`: the first drag render could not be measured, so there
+  // is no valid reference and no compensation is applied (re-basing from a later,
+  // already-grown frame would leave the diagram shifted for the rest of the drag).
+  const originStartRef = useRef<{ x: number; y: number } | false | null>(null);
   useLayoutEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -1212,10 +1215,11 @@ function C4InteractiveSvg({
     }
     svg.style.transform = '';
     const ctm = svg.getScreenCTM();
-    if (!ctm) return;
     // The first drag render still has the pre-drag frame: positions only change
     // on a later animation frame.
-    const start = (originStartRef.current ??= { x: ctm.e, y: ctm.f });
+    if (originStartRef.current === null) originStartRef.current = ctm ? { x: ctm.e, y: ctm.f } : false;
+    const start = originStartRef.current;
+    if (!start || !ctm) return;
     const dx = start.x - ctm.e;
     const dy = start.y - ctm.f;
     if (dx !== 0 || dy !== 0) svg.style.transform = `translate(${dx}px, ${dy}px)`;
