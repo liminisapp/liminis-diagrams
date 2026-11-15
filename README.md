@@ -133,7 +133,7 @@ refused with `move-into-self`. A re-parent drop calls `onEdit` and **not** `onPo
 store `context.positions` as for every other edit.
 
 See [Recipe 4](https://docs.liminis.app/liminis-diagrams/recipes/#recipe-4-adding-elements-and-relationships--the-hosts-responsibilities)
-for the host's responsibilities. Available from the release after 0.1.6.
+for the host's responsibilities. Available from 0.2.0.
 
 Pass `manualPositions` to `layoutC4Diagram` to bypass dagre for the elements you have
 positions for. Persisting them is entirely your call — see

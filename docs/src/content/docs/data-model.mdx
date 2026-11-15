@@ -82,7 +82,7 @@ interface C4Relationship {
   sourceId: string;   // C4Element.id this relationship starts from
   targetId: string;   // C4Element.id this relationship points to
   label: string;       // "label" or "label [technology]" if a technology arg was given
-  technology?: string; // the technology argument, only when non-empty (from the release after 0.1.6)
+  technology?: string; // the technology argument, only when non-empty (from 0.2.0)
 }
 ```
 
@@ -93,7 +93,7 @@ of how deeply either is nested.
 
 The AST records no source locations, deliberately: `parseC4`'s result shape is stable.
 Editing needs them, so `parseC4WithSpans(code)` returns everything `parseC4` does plus a
-parallel `spans` structure (from the release after 0.1.6):
+parallel `spans` structure (from 0.2.0):
 
 ```ts
 interface C4SourceSpans {
@@ -168,7 +168,7 @@ interface LayoutEdge {
   target: string;
   points: Point[];    // [sourcePoint, targetPoint] — where the edge crosses each node's boundary
   label: string;
-  relationshipIndex?: number; // index into diagram.relationships (from the release after 0.1.6)
+  relationshipIndex?: number; // index into diagram.relationships (from 0.2.0)
 }
 ```
 
