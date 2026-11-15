@@ -11,7 +11,7 @@
 // global scope or not ship at all, leaving our emitted .d.ts referencing an
 // unresolvable `JSX.Element`. Importing the namespace keeps it local.
 import type { JSX } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { C4RendererContent, computeLegendInfo, normaliseZoom } from './renderer';
 import { BOUNDARY_HEADER_HEIGHT, BOUNDARY_PADDING, EMPTY_BOUNDARY_SIZE, layoutC4Diagram } from '../core/layout';
 import type { LayoutResult, LayoutNode, C4Diagram, C4Element, Point } from '../core/types';
@@ -29,6 +29,13 @@ import { sanitizeC4Text, type C4Edit, type C4RelationshipTarget } from '../core/
 import { estimateLabelSize } from '../core/edge-clipping';
 import { useC4DiagramDrag, type C4DragInfo } from './hooks/useC4DiagramDrag';
 import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
+import {
+  GROWTH_CAP_MARGIN_PX,
+  MAX_REMAP_PASSES,
+  findScrollContainerRect,
+  isInsideGrowthMargin,
+  scaleDiffers,
+} from './dragFrame';
 import { findBoundaryAt, findElementAt } from './hit-test';
 import { clampIntoBoundary, decideReparent, findDropTarget } from './reparent-drop';
 import { LONG_PRESS_MOVE_TOLERANCE, useC4LongPress } from './hooks/useC4LongPress';
@@ -189,8 +196,19 @@ export interface C4InteractiveRendererProps {
    *
    * Controls are deliberately not included. What a zoom control should look like
    * is the host's business — this package renders diagrams.
+   *
+   * The one CSS `transform` this component ever sets is not the zoom mechanism:
+   * during a node drag it translates the `<svg>` to hold the diagram origin still
+   * on screen while the frame grows (ADR-100), and it is removed when the drag ends.
    */
   zoom?: number;
+  /**
+   * Called when the size of the frame (the viewBox width and height, in diagram
+   * units) changes, from a layout effect — so a host that derives `zoom` from the
+   * frame (zoom-to-fit) can re-measure and re-render before the browser paints.
+   * During a node drag the frame grows live, and this is how a fitting host sees it.
+   */
+  onFrameChange?: (size: { width: number; height: number }) => void;
 }
 
 /**
@@ -253,8 +271,21 @@ export function C4InteractiveRenderer({
   onPositionChange,
   onEdit,
   zoom = 1,
+  onFrameChange,
 }: C4InteractiveRendererProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Live frame growth during a drag (ADR-100, amended by #104). `scale` is the
+  // rendered scale; the drag-start value tells the cap whether it has changed.
+  const scale = normaliseZoom(zoom);
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  const dragStartScaleRef = useRef(scale);
+  // Growth is paused while the pointer is near the container edge in a drag whose
+  // scale has changed (zoom-to-fit). See `GROWTH_CAP_MARGIN_PX`.
+  const [growthCapped, setGrowthCapped] = useState(false);
+  // Consecutive synthetic re-maps since the last real pointer move.
+  const remapPassesRef = useRef(0);
 
   // Structural editing is on only with edit mode AND a callback to report to: a
   // host that passes isEditMode for dragging alone must not grow dead buttons.
@@ -360,6 +391,16 @@ export function C4InteractiveRenderer({
   // Handle real-time position updates during drag, throttled to rAF
   const handleNodeDrag = useCallback((nodeId: string, x: number, y: number, info?: C4DragInfo) => {
     dragMovedRef.current = true;
+    if (info && !info.synthetic) remapPassesRef.current = 0;
+    if (info && svgRef.current) {
+      // The feedback cap: growing the frame shrinks the fit scale, which maps the
+      // same pointer position further out. Stop growing near the container edge.
+      // Inert at a fixed zoom, where the scale never changes.
+      const capped =
+        scaleDiffers(scaleRef.current, dragStartScaleRef.current) &&
+        isInsideGrowthMargin(findScrollContainerRect(svgRef.current), info.clientX, info.clientY, GROWTH_CAP_MARGIN_PX);
+      setGrowthCapped((prev) => (prev === capped ? prev : capped));
+    }
     if (canEdit && info) {
       const snapshot = dragSnapshotRef.current;
       let next: DropTarget | null = null;
@@ -422,6 +463,7 @@ export function C4InteractiveRenderer({
   // Handle drag end - persist positions
   // Uses dragPositionsRef (not dragPositions state) to avoid stale closure race
   const handleNodeDragEnd = useCallback((nodeId: string, x: number, y: number, info?: C4DragInfo) => {
+    setGrowthCapped(false);
     // Cancel any pending rAF
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
@@ -534,6 +576,7 @@ export function C4InteractiveRenderer({
 
   /** Drop every trace of a drag in flight without reporting it. */
   const resetDragState = useCallback(() => {
+    setGrowthCapped(false);
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -554,13 +597,25 @@ export function C4InteractiveRenderer({
   const handleNodeDragCancel = useCallback(() => resetDragState(), [resetDragState]);
 
   // Set up drag hook (window-level listeners handle mousemove/mouseup)
-  const { draggedNodeId, startNodeDrag, cancelDrag } = useC4DiagramDrag({
+  const { draggedNodeId, startNodeDrag, cancelDrag, remapDrag } = useC4DiagramDrag({
     svgRef,
     onNodeDrag: handleNodeDrag,
     onNodeDragEnd: handleNodeDragEnd,
     onNodeDragCancel: canEdit ? handleNodeDragCancel : undefined,
     enabled: isEditMode,
   });
+
+  // The rendered scale changed (zoom-to-fit re-fitting as the frame grew) under a
+  // stationary pointer: re-map the pointer through the new matrix so the dragged
+  // node comes back under it. Runs in the layout phase, after the child has
+  // committed the new size and re-applied the origin hold. Each pass can change
+  // the frame and so the scale again; it converges while the pointer is inside the
+  // container, and `MAX_REMAP_PASSES` bounds it regardless.
+  useLayoutEffect(() => {
+    if (draggedNodeId === null) return;
+    if (remapPassesRef.current >= MAX_REMAP_PASSES) return;
+    if (remapDrag()) remapPassesRef.current += 1;
+  }, [scale, draggedNodeId, remapDrag]);
 
   /**
    * Every node's position: the current layout for nodes without a manual
@@ -611,6 +666,14 @@ export function C4InteractiveRenderer({
         dragSnapshotRef.current = layout.nodes;
         dragMovedRef.current = false;
         dragStartClientRef.current = { x: e.clientX, y: e.clientY };
+      }
+      // No overlay needs closing here: the menu closes on the outside pointerdown that
+      // begins this drag and a label input on blur, so none is open to be misplaced
+      // while the frame grows (they are siblings of the <svg>, not under its transform).
+      if (draggedNodeIdRef.current === null) {
+        dragStartScaleRef.current = scaleRef.current;
+        remapPassesRef.current = 0;
+        setGrowthCapped(false);
       }
       startNodeDrag(nodeId, nodeX, nodeY, e);
     },
@@ -916,6 +979,8 @@ export function C4InteractiveRenderer({
       legendInfo={legendInfo}
       legendPositionOverride={legendPositionOverride}
       zoom={zoom}
+      growthCapped={growthCapped}
+      onFrameChange={onFrameChange}
       editing={
         canEdit
           ? {
@@ -965,6 +1030,9 @@ interface C4InteractiveSvgProps {
   legendPositionOverride: { x: number; y: number } | null;
   /** Scale factor applied to the rendered size; the viewBox is unchanged. */
   zoom: number;
+  /** Frame growth is paused (fit mode, pointer near the container edge). */
+  growthCapped: boolean;
+  onFrameChange?: (size: { width: number; height: number }) => void;
   /** Structural-editing state and handlers; null when editing is not enabled. */
   editing: EditingProps | null;
 }
@@ -1022,6 +1090,8 @@ function C4InteractiveSvg({
   legendInfo,
   legendPositionOverride,
   zoom,
+  growthCapped,
+  onFrameChange,
   editing,
 }: C4InteractiveSvgProps): JSX.Element {
   // Guarded here as well as in C4Renderer: both are public entry points, and a
@@ -1100,28 +1170,74 @@ function C4InteractiveSvg({
     liveScale,
   ]);
 
-  // Freeze the frame for the whole of a drag (ADR-100).
+  // Live frame, origin held still (ADR-100, amended by #104).
   //
-  // `layout` keeps updating live while a node is dragged, so a drag past the top
-  // or left edge makes `viewBoxX/Y` negative and grows the SVG. The pointer-to-SVG
-  // mapping is locked at drag start (`useC4DiagramDrag`) to avoid a feedback loop,
-  // so if the SVG's size or origin moved on screen the node would drift away from
-  // the pointer and every other node would appear to slide. Holding the frame
-  // constant keeps that locked mapping valid for the whole drag; the dragged node
-  // is drawn past the frozen edges (`overflow: visible`) and the frame is
-  // recomputed exactly once, on the first render after the drag ends.
+  // `layout` keeps updating while a node is dragged, so the frame (viewBox and
+  // size) grows live and the host's scroll extent follows. Growth moves the
+  // diagram origin on screen — a negative `viewBoxX/Y` at the top and left, and a
+  // centring host shifts content by half the growth at the right and bottom — which
+  // would drag every node, and the dragged node away from the pointer, whose
+  // mapping is locked at drag start (`useC4DiagramDrag`). So, after every render
+  // during a drag, the origin is measured and the difference from where it was at
+  // drag start is cancelled with a CSS `transform: translate(...)`. A transform
+  // does not affect layout, so the pane still grows. It is dropped on release.
   //
-  // The ref holds the last frame rendered while no drag was active. The render
-  // that first sees `draggedNodeId` set still has the pre-drag layout, because
-  // `dragPositions` only changes on a later animation frame, so nothing needs to
-  // be captured in an event handler.
+  // The one exception is the fit-mode feedback cap: while `growthCapped` the last
+  // uncapped frame is rendered again (the scale, and so the mapping, stay put and
+  // the node still follows the pointer; it is drawn past the edge, `overflow:
+  // visible`). `frameRef` is updated on every uncapped render.
   const frameRef = useRef<SvgFrame>(liveFrame);
   const dragging = draggedNodeId !== null;
-  if (!dragging) frameRef.current = liveFrame;
-  const frame = dragging ? frameRef.current : liveFrame;
+  const capped = dragging && growthCapped;
+  if (!capped) frameRef.current = liveFrame;
+  const frame = capped ? frameRef.current : liveFrame;
   const { svgWidth, svgHeight, scale } = frame;
   const viewBoxX = frame.viewBoxX;
   const viewBoxY = frame.viewBoxY;
+
+  // Hold the origin. Layout phase, so no frame is painted between the frame
+  // changing and the compensation catching up. The transform is cleared before
+  // measuring, so the measurement never depends on whether an engine's
+  // `getScreenCTM()` includes a CSS transform (WebKit has been inconsistent), and
+  // the result is the real position, so host centring needs no special case.
+  // Imperative on purpose: React's style diffing never touches it.
+  const originStartRef = useRef<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    if (!dragging) {
+      if (svg.style.transform) svg.style.transform = '';
+      originStartRef.current = null;
+      return;
+    }
+    svg.style.transform = '';
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    // The first drag render still has the pre-drag frame: positions only change
+    // on a later animation frame.
+    const start = (originStartRef.current ??= { x: ctm.e, y: ctm.f });
+    const dx = start.x - ctm.e;
+    const dy = start.y - ctm.f;
+    if (dx !== 0 || dy !== 0) svg.style.transform = `translate(${dx}px, ${dy}px)`;
+  });
+  // Dropped with the component too, though the element goes with it.
+  useLayoutEffect(
+    () => () => {
+      if (svgRef.current) svgRef.current.style.transform = '';
+    },
+    [svgRef],
+  );
+
+  // Tell a fitting host the frame size changed, in the same commit.
+  const onFrameChangeRef = useRef(onFrameChange);
+  onFrameChangeRef.current = onFrameChange;
+  const lastFrameSizeRef = useRef({ width: svgWidth, height: svgHeight });
+  useLayoutEffect(() => {
+    const last = lastFrameSizeRef.current;
+    if (last.width === svgWidth && last.height === svgHeight) return;
+    lastFrameSizeRef.current = { width: svgWidth, height: svgHeight };
+    onFrameChangeRef.current?.({ width: svgWidth, height: svgHeight });
+  }, [svgWidth, svgHeight]);
 
   const connectSource = editing?.connectSourceId
     ? layout.nodes.find((n) => n.id === editing.connectSourceId)
@@ -1174,7 +1290,7 @@ function C4InteractiveSvg({
         style={{
           fontFamily: 'system-ui, -apple-system, sans-serif',
           cursor: isEditMode ? (draggedNodeId ? 'grabbing' : 'default') : 'default',
-          // The frame is frozen during a drag, so the dragged node can leave it.
+          // While growth is paused the frame is held, so the dragged node can leave it.
           ...(dragging ? { overflow: 'visible' } : {}),
           // A long-press must open the menu, not the browser's text-selection and
           // callout. Edit mode with a callback only; read-only renders keep defaults.
