@@ -118,3 +118,93 @@ describe('useC4DiagramDrag: cancel semantics', () => {
     expect(onNodeDragCancel).not.toHaveBeenCalled();
   });
 });
+
+describe('useC4DiagramDrag: scale change and remap (#104)', () => {
+  // A CTM stub with a real scale `a`, which the test can change mid-drag.
+  let scale = 1;
+  beforeEach(() => {
+    scale = 1;
+    const proto = window.SVGSVGElement?.prototype as unknown as Record<string, unknown>;
+    const inverseOf = (a: number) => ({ a: 1 / a, e: 0, d: 1 / a, f: 0 });
+    proto.getScreenCTM = function getScreenCTM() {
+      return { a: scale, d: scale, e: 0, f: 0, inverse: () => inverseOf(scale) };
+    };
+    proto.createSVGPoint = function createSVGPoint() {
+      return {
+        x: 0,
+        y: 0,
+        matrixTransform(m: { a: number; e: number; d: number; f: number }) {
+          return { x: m.a * this.x + m.e, y: m.d * this.y + m.f };
+        },
+      };
+    };
+  });
+
+  it('keeps the locked mapping while the scale is unchanged', () => {
+    const onNodeDrag = vi.fn();
+    setup({ onNodeDrag });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag.mock.calls[0].slice(1, 3)).toEqual([100, 50]);
+  });
+
+  it('switches to the live mapping once the scale differs from the drag start', () => {
+    const onNodeDrag = vi.fn();
+    setup({ onNodeDrag });
+    scale = 0.5;
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag.mock.calls[0].slice(1, 3)).toEqual([200, 100]);
+  });
+
+  it('ignores float noise in the scale', () => {
+    const onNodeDrag = vi.fn();
+    setup({ onNodeDrag });
+    scale = 1 + 1e-9;
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag.mock.calls[0].slice(1, 3)).toEqual([100, 50]);
+  });
+
+  function RemapHarness({ onNodeDrag, expose }: { onNodeDrag: Props['onNodeDrag']; expose: (r: () => boolean) => void }) {
+    const svgRef = useRef<SVGSVGElement>(null);
+    const { startNodeDrag, remapDrag } = useC4DiagramDrag({ svgRef, enabled: true, onNodeDrag });
+    expose(remapDrag);
+    return (
+      <svg ref={svgRef}>
+        <rect data-node="a" onPointerDown={(e) => startNodeDrag('a', 0, 0, e)} />
+      </svg>
+    );
+  }
+
+  it('remapDrag re-reports the last pointer position only when it changed', () => {
+    const onNodeDrag = vi.fn();
+    let remap: () => boolean = () => false;
+    const { container } = render(<RemapHarness onNodeDrag={onNodeDrag} expose={(r) => (remap = r)} />);
+    fireEvent.pointerDown(container.querySelector('[data-node]')!, { pointerId: 1, clientX: 0, clientY: 0 });
+    // Nothing to remap before the pointer has moved.
+    expect(remap()).toBe(false);
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag).toHaveBeenCalledTimes(1);
+    // Same mapping: nothing changed, nothing reported.
+    expect(remap()).toBe(false);
+    expect(onNodeDrag).toHaveBeenCalledTimes(1);
+    // The scale changed under a stationary pointer.
+    scale = 0.5;
+    expect(remap()).toBe(true);
+    expect(onNodeDrag).toHaveBeenCalledTimes(2);
+    const [, x, y, info] = onNodeDrag.mock.calls[1];
+    expect([x, y]).toEqual([200, 100]);
+    expect(info.synthetic).toBe(true);
+    // Settled again.
+    expect(remap()).toBe(false);
+  });
+
+  it('remapDrag is a no-op after the drag ends', () => {
+    const onNodeDrag = vi.fn();
+    let remap: () => boolean = () => false;
+    const { container } = render(<RemapHarness onNodeDrag={onNodeDrag} expose={(r) => (remap = r)} />);
+    fireEvent.pointerDown(container.querySelector('[data-node]')!, { pointerId: 1, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    scale = 0.5;
+    expect(remap()).toBe(false);
+  });
+});
