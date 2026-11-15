@@ -235,11 +235,14 @@ layoutC4Diagram(diagram, undefined, { user: { x: -100, y: -50 }, app: { x: 200, 
 ```
 
 :::note[While a node is being dragged]
-`layoutC4Diagram` still recomputes live as positions change, but `C4InteractiveRenderer`
-does not apply the new `viewBox` and size to the `<svg>` until the drag ends. During a
-drag the frame (origin, size and zoom) is frozen and the dragged node may be drawn past
-its edges; on release the frame is recomputed once, so content shifts once, without
-animation, if the diagram grew at the top or left. See ADR-100.
+`layoutC4Diagram` recomputes live as positions change, and `C4InteractiveRenderer` applies
+the new `viewBox` and size to the `<svg>` as it goes, so the drawing area (and the host's
+scroll extent) grows while a node is dragged past an edge. To keep the diagram from sliding
+under the pointer, the renderer holds the diagram origin still on screen with a temporary CSS
+`transform` on the `<svg>`, dropped on release; content shifts once, without animation, if the
+diagram grew at the top or left. In zoom-to-fit the scale changes live and the pointer is
+mapped through the current matrix; pass `onFrameChange` to re-fit as the frame grows. See
+ADR-100 (as amended by #104).
 :::
 
 ## Worked example: parse → layout, real output

@@ -102,7 +102,10 @@
 
    No vertical centring (ADR-100). Anything that changed the pane's height or
    the diagram's height — a menu opening, a drag growing the canvas — moved the
-   whole picture by half the change. Hosts anchor the diagram top-left anyway. */
+   whole picture by half the change. Hosts anchor the diagram top-left anyway.
+   The frame does grow live during a drag; the renderer cancels the resulting
+   origin shift with a transient transform on the <svg> (right and bottom growth
+   still moves the auto margins), so none of this is relied on for that. */
 .c4-playground__canvas > * { margin: 0 auto; }
 
 /* Lightbox. The first attempt was inset:0 with no backdrop — a takeover, not a

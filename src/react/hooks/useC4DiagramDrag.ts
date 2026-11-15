@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, RefObject } from 'react';
+import { scaleDiffers } from '../dragFrame';
 
 /**
  * What the pointer was doing at the event that produced a drag callback. Passed
@@ -30,6 +31,11 @@ export interface C4DragInfo {
   altKey: boolean;
   /** 'mouse' | 'touch' | 'pen' (empty for a synthesised event) */
   pointerType: string;
+  /**
+   * True when the callback was produced by `remapDrag()` (the pointer did not
+   * move; the screen-to-SVG mapping did) rather than by a pointer event.
+   */
+  synthetic?: boolean;
 }
 
 export interface UseC4DiagramDragProps {
@@ -75,6 +81,13 @@ export interface UseC4DiagramDragReturn {
    * over the pointer. A no-op when nothing is being dragged.
    */
   cancelDrag: () => void;
+  /**
+   * Re-run the last pointer position through the current mapping and report it
+   * through `onNodeDrag` (with `info.synthetic`) if the node's position changed.
+   * For when the rendered scale changed under a stationary pointer (zoom-to-fit
+   * while the frame grows). Returns whether a callback was fired.
+   */
+  remapDrag: () => boolean;
 }
 
 function infoOf(e: PointerEvent, point: { x: number; y: number } | null): C4DragInfo {
@@ -111,9 +124,17 @@ export function useC4DiagramDrag({
   // which cannot be concurrent anyway.
   const activePointerIdRef = useRef<number | null>(null);
 
-  // Locked CTM inverse captured at drag start — prevents the accelerating
-  // feedback loop where canvas expansion changes the scale mid-drag
+  // Locked CTM inverse captured at drag start. At a fixed scale the renderer
+  // holds the diagram origin still on screen (ADR-100, amended by #104), so this
+  // stays equal to the live matrix and is used as-is: it keeps working where an
+  // engine's `getScreenCTM()` is unreliable with a CSS transform.
   const lockedCtmInverseRef = useRef<DOMMatrix | null>(null);
+  // The scale (`a`) of the matrix above. When the live scale differs (zoom-to-fit
+  // re-fitting as the frame grows) the locked matrix is wrong and the live one is
+  // used instead, so the node stays under the pointer.
+  const lockedScaleRef = useRef<number | null>(null);
+  // The most recent real pointer event, for `remapDrag`.
+  const lastPointerRef = useRef<PointerEvent | null>(null);
 
   // Refs for callbacks so window listeners always see latest values
   const onNodeDragRef = useRef(onNodeDrag);
@@ -126,7 +147,8 @@ export function useC4DiagramDrag({
 
   /**
    * Convert screen (client) coordinates to SVG coordinates.
-   * Uses the locked CTM from drag start if available, otherwise live CTM.
+   * Uses the locked CTM from drag start while the rendered scale is unchanged,
+   * and the live CTM when the scale has changed or nothing is locked.
    */
   const screenToSvg = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } | null => {
@@ -137,7 +159,13 @@ export function useC4DiagramDrag({
       point.x = clientX;
       point.y = clientY;
 
-      const inverse = lockedCtmInverseRef.current ?? svg.getScreenCTM()?.inverse();
+      let inverse = lockedCtmInverseRef.current;
+      const lockedScale = lockedScaleRef.current;
+      if (inverse && lockedScale !== null) {
+        const live = svg.getScreenCTM();
+        if (live && Number.isFinite(live.a) && scaleDiffers(live.a, lockedScale)) inverse = live.inverse();
+      }
+      inverse ??= svg.getScreenCTM()?.inverse() ?? null;
       if (!inverse) return null;
 
       const svgPoint = point.matrixTransform(inverse);
@@ -172,6 +200,8 @@ export function useC4DiagramDrag({
       const svg = svgRef.current;
       const ctm = svg?.getScreenCTM();
       lockedCtmInverseRef.current = ctm ? ctm.inverse() : null;
+      lockedScaleRef.current = ctm && Number.isFinite(ctm.a) ? ctm.a : null;
+      lastPointerRef.current = null;
 
       const svgPoint = screenToSvg(e.clientX, e.clientY);
       if (!svgPoint) return;
@@ -193,7 +223,24 @@ export function useC4DiagramDrag({
     draggedNodeIdRef.current = null;
     activePointerIdRef.current = null;
     lockedCtmInverseRef.current = null;
+    lockedScaleRef.current = null;
+    lastPointerRef.current = null;
     setDraggedNodeId(null);
+  }, []);
+
+  const remapDrag = useCallback((): boolean => {
+    const nodeId = draggedNodeIdRef.current;
+    const e = lastPointerRef.current;
+    if (!nodeId || !e) return false;
+    const svgPoint = screenToSvgRef.current(e.clientX, e.clientY);
+    if (!svgPoint) return false;
+    const newX = svgPoint.x - dragOffsetRef.current.x;
+    const newY = svgPoint.y - dragOffsetRef.current.y;
+    const last = lastPositionRef.current;
+    if (Math.abs(newX - last.x) <= 0.01 && Math.abs(newY - last.y) <= 0.01) return false;
+    lastPositionRef.current = { x: newX, y: newY };
+    onNodeDragRef.current?.(nodeId, newX, newY, { ...infoOf(e, svgPoint), synthetic: true });
+    return true;
   }, []);
 
   // Attach window-level listeners while dragging
@@ -208,6 +255,7 @@ export function useC4DiagramDrag({
 
       const svgPoint = screenToSvgRef.current(e.clientX, e.clientY);
       if (!svgPoint) return;
+      lastPointerRef.current = e;
 
       const newX = svgPoint.x - dragOffsetRef.current.x;
       const newY = svgPoint.y - dragOffsetRef.current.y;
@@ -220,6 +268,8 @@ export function useC4DiagramDrag({
       draggedNodeIdRef.current = null;
       activePointerIdRef.current = null;
       lockedCtmInverseRef.current = null;
+      lockedScaleRef.current = null;
+      lastPointerRef.current = null;
       setDraggedNodeId(null);
     };
 
@@ -278,5 +328,6 @@ export function useC4DiagramDrag({
     startNodeDrag,
     screenToSvg,
     cancelDrag,
+    remapDrag,
   };
 }

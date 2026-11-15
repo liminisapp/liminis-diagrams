@@ -10,16 +10,33 @@
  * to those during a drag is visible to the coordinate maths.
  *
  * Host layouts:
- *  - `centred`: the SVG is centred in a pane on both axes with `margin: auto`
- *    semantics (offset `(pane - size) / 2`, never negative). This is the
- *    playground as it was before #100, and the layout that exposed the bug.
+ *  - `centred`: the SVG is centred in a pane on both axes (offset
+ *    `(pane - size) / 2`, never negative). This is the playground as it was
+ *    before #100, and the editor's `justify-content: center` column host.
+ *  - `centred-x`: centred horizontally only, pinned to the top. This is the
+ *    playground now (`margin: 0 auto`).
  *  - `top-left`: the SVG sits at the pane's top-left, shifted by the container's
  *    scroll position. This is how a typical host embeds it.
+ *
+ * CSS transform (ADR-100, amended by #104): the renderer holds the diagram origin
+ * still during a drag by setting `transform: translate(Xpx, Ypx)` on the `<svg>`.
+ * The stub reads it from `svg.style.transform` and adds it to the SVG's screen
+ * position, because a transform moves what is painted without affecting layout
+ * (so the host offsets above ignore it). Engines disagree on whether
+ * `getScreenCTM()` includes such a transform; `ctmIncludesTransform: false` models
+ * one that does not. `nodeScreenPos` always includes it: it is the true,
+ * painted position, which is what the user sees and what the tests assert.
  */
 
 export type HostLayout =
   | { mode: 'centred'; paneWidth: number; paneHeight: number }
+  | { mode: 'centred-x'; paneWidth: number }
   | { mode: 'top-left'; scrollLeft?: number; scrollTop?: number };
+
+export interface SvgGeometryOptions {
+  /** Whether `getScreenCTM()` includes the CSS transform (default true). */
+  ctmIncludesTransform?: boolean;
+}
 
 interface Affine {
   a: number;
@@ -31,8 +48,10 @@ interface Affine {
 export interface SvgGeometry {
   /** Replace the modelled host layout (for example to add a pre-scroll). */
   setHost(host: HostLayout): void;
-  /** The screen-to-SVG affine currently in effect for `svg`. */
+  /** The screen-to-SVG affine as `getScreenCTM()` reports it for `svg`. */
   ctm(svg: SVGSVGElement): Affine;
+  /** The translation currently applied to `svg` by its CSS transform. */
+  transformOf(svg: SVGSVGElement): { x: number; y: number };
   /** Screen (client) position of the top-left of the hit rect for `nodeId`. */
   nodeScreenPos(container: HTMLElement, nodeId: string): { x: number; y: number };
   /** Rendered size of the svg on screen, in px. */
@@ -47,8 +66,17 @@ function parseViewBox(svg: SVGSVGElement): [number, number, number, number] {
   return [parts[0], parts[1], parts[2], parts[3]];
 }
 
-export function installSvgGeometry(initialHost: HostLayout): SvgGeometry {
+function parseTranslate(svg: SVGSVGElement): { x: number; y: number } {
+  const m = /translate\(\s*(-?[\d.e+-]+)(?:px)?\s*,\s*(-?[\d.e+-]+)(?:px)?\s*\)/.exec(svg.style.transform ?? '');
+  return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
+}
+
+export function installSvgGeometry(
+  initialHost: HostLayout,
+  options: SvgGeometryOptions = {},
+): SvgGeometry {
   let host = initialHost;
+  const ctmIncludesTransform = options.ctmIncludesTransform ?? true;
   const proto = window.SVGSVGElement?.prototype as unknown as Record<string, unknown>;
   const saved = {
     createSVGPoint: proto.createSVGPoint,
@@ -60,18 +88,34 @@ export function installSvgGeometry(initialHost: HostLayout): SvgGeometry {
     height: Number(svg.getAttribute('height')),
   });
 
-  const ctm = (svg: SVGSVGElement): Affine => {
+  const affine = (svg: SVGSVGElement, withTransform: boolean): Affine => {
     const [vbX, vbY, vbW, vbH] = parseViewBox(svg);
     const { width, height } = renderedSize(svg);
     const a = width / vbW;
     const d = height / vbH;
-    const [offX, offY] =
-      host.mode === 'centred'
-        ? [Math.max(0, (host.paneWidth - width) / 2), Math.max(0, (host.paneHeight - height) / 2)]
-        : [-(host.scrollLeft ?? 0), -(host.scrollTop ?? 0)];
+    let offX: number;
+    let offY: number;
+    if (host.mode === 'centred') {
+      offX = Math.max(0, (host.paneWidth - width) / 2);
+      offY = Math.max(0, (host.paneHeight - height) / 2);
+    } else if (host.mode === 'centred-x') {
+      offX = Math.max(0, (host.paneWidth - width) / 2);
+      offY = 0;
+    } else {
+      offX = -(host.scrollLeft ?? 0);
+      offY = -(host.scrollTop ?? 0);
+    }
+    if (withTransform) {
+      const t = parseTranslate(svg);
+      offX += t.x;
+      offY += t.y;
+    }
     // screen = a * svgX + e, where svgX = vbX maps to the SVG's own left edge.
     return { a, d, e: offX - vbX * a, f: offY - vbY * d };
   };
+
+  /** What `getScreenCTM()` reports. */
+  const ctm = (svg: SVGSVGElement): Affine => affine(svg, ctmIncludesTransform);
 
   const inverseOf = (m: Affine) => ({
     a: 1 / m.a,
@@ -97,7 +141,8 @@ export function installSvgGeometry(initialHost: HostLayout): SvgGeometry {
   const nodeScreenPos = (container: HTMLElement, nodeId: string) => {
     const svg = container.querySelector('svg') as unknown as SVGSVGElement;
     const rect = container.querySelector(`[data-node-id="${nodeId}"]`)!;
-    const m = ctm(svg);
+    // The painted position: always includes the transform.
+    const m = affine(svg, true);
     return {
       x: m.a * Number(rect.getAttribute('x')) + m.e,
       y: m.d * Number(rect.getAttribute('y')) + m.f,
@@ -109,6 +154,7 @@ export function installSvgGeometry(initialHost: HostLayout): SvgGeometry {
       host = next;
     },
     ctm,
+    transformOf: parseTranslate,
     nodeScreenPos,
     renderedSize,
     allScreenPositions(container) {

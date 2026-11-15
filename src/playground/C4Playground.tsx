@@ -220,14 +220,15 @@ export default function C4Playground({
 
   // Measure after layout rather than after paint, so the diagram is never shown
   // at the wrong size for a frame and then corrected — which reads as a flinch.
+  const measure = useCallback(() => {
+    const fit = fitScale(canvasRef.current)
+    if (fit !== null) setFittedZoom(fit)
+  }, [])
+
   useLayoutEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const measure = () => {
-      const fit = fitScale(canvas)
-      if (fit !== null) setFittedZoom(fit)
-    }
     measure()
 
     // The pane resizes when the window does, when the lightbox opens, and when
@@ -238,7 +239,7 @@ export default function C4Playground({
     return () => observer.disconnect()
     // `text` is a dependency because editing the source changes the diagram's
     // dimensions, and `isExpanded` because the pane it has to fit changes.
-  }, [text, isExpanded, showSource])
+  }, [text, isExpanded, showSource, measure])
 
   // Expanding is a request to see the whole diagram, so it returns to fitting
   // even if the reader had zoomed in beforehand. Collapsing does the same, since
@@ -385,6 +386,10 @@ export default function C4Playground({
               onPositionChange={setPositions}
               onEdit={editable ? handleEdit : undefined}
               zoom={zoom}
+              // The frame grows live while a node is dragged past an edge (ADR-100). Neither the
+              // pane nor the source changes then, so nothing else would re-fit; this fires in the
+              // renderer's layout phase, so the new scale lands before paint.
+              onFrameChange={measure}
             />
           ) : (
             <C4ErrorDisplay errors={parsed.errors} isDarkMode={isDarkMode} />
