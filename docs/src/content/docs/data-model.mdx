@@ -234,6 +234,14 @@ layoutC4Diagram(diagram, undefined, { user: { x: -100, y: -50 }, app: { x: 200, 
 //   ^ note: user.x/y are exactly what was passed in, untouched — only viewBoxX/Y compensate
 ```
 
+:::note[While a node is being dragged]
+`layoutC4Diagram` still recomputes live as positions change, but `C4InteractiveRenderer`
+does not apply the new `viewBox` and size to the `<svg>` until the drag ends. During a
+drag the frame (origin, size and zoom) is frozen and the dragged node may be drawn past
+its edges; on release the frame is recomputed once, so content shifts once, without
+animation, if the diagram grew at the top or left. See ADR-100.
+:::
+
 ## Worked example: parse → layout, real output
 
 ```ts

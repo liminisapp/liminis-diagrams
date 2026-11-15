@@ -34,6 +34,11 @@ Drag a node and the arrows re-route around it. Turn the checkbox off and the dra
 disappears entirely — that is `isEditMode`, and it is the host's decision, not the
 library's.
 
+The diagram is anchored to the top of the pane and centred horizontally. While you drag, the
+canvas does not resize, so the node stays under the pointer and nothing else moves, even past
+the top or left edge. When you let go the canvas is resized once to contain the node, and
+the picture shifts once if it grew at the top or left.
+
 ## Adding elements and relationships
 
 From the release after 0.1.6, a host that passes `onEdit` also gets an **add-element menu**
