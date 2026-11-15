@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup, fireEvent, act } from '@testing-library/react';
+import { installSvgGeometry } from '../react/test-utils/svgGeometry';
 import C4Playground from './C4Playground';
 
 /**
@@ -94,6 +95,40 @@ describe('C4Playground zoom', () => {
 
   it('offers no reset while already fitted', () => {
     expect(renderAt(200).fitButton.disabled).toBe(true);
+  });
+});
+
+describe('C4Playground zoom while dragging (ADR-100, amended by #104)', () => {
+  it('re-fits live as a node is dragged past the edge, and restores the fit on cancel', async () => {
+    const geo = installSvgGeometry({ mode: 'top-left' });
+    try {
+      const { naturalWidth } = renderAt(10_000);
+      cleanup();
+      measureAs(naturalWidth / 2, 10_000);
+      const utils = render(<C4Playground source={SOURCE} />);
+      const svg = utils.container.querySelector('svg')!;
+      const scale = () => Number(svg.getAttribute('width')) / svg.viewBox.baseVal.width;
+      const before = scale();
+      expect(before).toBeCloseTo(0.5, 2);
+
+      const node = utils.container.querySelector('[data-node-id="a"]')!;
+      const start = geo.nodeScreenPos(utils.container, 'a');
+      fireEvent.pointerDown(node, { pointerId: 1, clientX: start.x + 5, clientY: start.y + 5 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: start.x + 305, clientY: start.y + 5 });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      // The frame grew while the pointer was still down, and the fit followed it.
+      expect(scale()).toBeLessThan(before - 0.01);
+
+      fireEvent.pointerCancel(window, { pointerId: 1 });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 60));
+      });
+      expect(scale()).toBeCloseTo(before, 2);
+    } finally {
+      geo.restore();
+    }
   });
 });
 
