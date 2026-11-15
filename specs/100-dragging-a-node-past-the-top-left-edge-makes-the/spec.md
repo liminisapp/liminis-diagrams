@@ -2,7 +2,7 @@
 
 **Feature Branch**: `fabrik/issue-100`
 **Created**: 2026-11-13
-**Status**: Draft
+**Status**: Specified
 **Input**: User description: "## Problem
 
 When a node is dragged up past the top of the diagram, or left past the left edge, **the whole diagram slides the other way on screen and the node stops tracking the pointer.** It happens on desktop with a mouse and on iPad with touch. On iPad it looks like the page is scrolling, but it isn't: `window` and the scroll container both stay at scroll 0 for the whole drag (confirmed from a live event log taken on a real iPad).
@@ -70,7 +70,7 @@ The bug predates structural editing. Structural editing (add, connect, rename) i
 
 ### User Story 1 - Drag a node past the top or left edge without the diagram sliding (Priority: P1)
 
-A person drags a node up or left beyond the current bounds of the diagram, with mouse or touch. The node follows the pointer exactly, and the rest of the diagram stays still.
+A person drags a node up or left beyond the current bounds of the diagram, with mouse or touch. The node follows the pointer exactly, and the rest of the diagram stays still. The node may be drawn outside the diagram's current bounds while the drag is in progress.
 
 **Why this priority**: This is the reported defect. It makes dragging near the diagram's edges unreliable on every device.
 
@@ -78,29 +78,45 @@ A person drags a node up or left beyond the current bounds of the diagram, with 
 
 **Acceptance Scenarios**:
 
-1. **Given** a diagram in the playground's centred pane, **When** a node is dragged 160 px above its start so the canvas must grow upward, **Then** the node's screen position equals the pointer's within 1 px at every step.
+1. **Given** a diagram in the playground, **When** a node is dragged 160 px above its start so it passes the top edge, **Then** the node's screen position equals the pointer's within 1 px at every step.
 2. **Given** the same drag, **When** it is in progress, **Then** every other node's screen position is unchanged (within 1 px) from drag start.
 3. **Given** a drag past the left edge, **When** it is in progress, **Then** the same two guarantees hold horizontally.
 4. **Given** a touch drag on iPad, **When** the node is dragged past the top or left edge, **Then** it behaves the same as with a mouse.
+5. **Given** a drag that went past the top or left edge, **When** the pointer is released, **Then** the canvas is resized once to contain the node, the diagram content shifts once on screen as a result, and this happens without animation.
 
 ---
 
-### User Story 2 - Same behaviour in any host layout (Priority: P1)
+### User Story 2 - Opening the add menu does not move the diagram (Priority: P1)
+
+A person long-presses a boundary and the add menu opens. The diagram does not move, and the pane does not change size. Holding still on an element moves nothing.
+
+**Why this priority**: Testing on an iPad simulator (iPad Pro 11-inch, iPadOS 26.2) showed that the "diagram slides without my finger moving" symptom is, in this case, not drag drift. The menu is positioned absolutely, yet the playground's canvas pane grows by 24 px (946 → 970) when it appears. Because the playground centres the diagram vertically, the diagram moves down 12 px. The page itself does not scroll. This is the same visible symptom as the drag bug and has to be fixed with it.
+
+**Independent Test**: In the playground, long-press a boundary so the menu opens, and compare the pane size and every node's screen position before and after.
+
+**Acceptance Scenarios**:
+
+1. **Given** a diagram in the playground, **When** the add menu opens from a long-press on a boundary, **Then** the canvas pane's size is unchanged and no node moves on screen.
+2. **Given** the menu is open, **When** it closes, **Then** the pane size and node positions are again unchanged.
+
+---
+
+### User Story 3 - Same behaviour in a top-anchored host layout (Priority: P1)
 
 An integrator embeds the diagram top-left in a scrolling container, as hosts typically do. Dragging past the top-left edge works as well there as in the playground.
 
-**Why this priority**: The fix cannot be specific to the playground's centring, since the library is embedded by other hosts.
+**Why this priority**: The fix cannot be specific to the playground's layout, since the library is embedded by other hosts.
 
 **Independent Test**: Render the diagram top-left in a scrolling container and repeat the drag from Story 1.
 
 **Acceptance Scenarios**:
 
-1. **Given** a diagram placed top-left in a scrolling container, **When** a node is dragged past the top or left edge, **Then** the node stays under the pointer and other nodes do not move on screen.
-2. **Given** a container that has been scrolled before the drag, **When** a node is dragged past an edge, **Then** the same guarantees hold.
+1. **Given** a diagram placed top-left in a scrolling container, **When** a node is dragged past the top or left edge, **Then** the node stays under the pointer and other nodes do not move on screen during the drag.
+2. **Given** a container that has been scrolled before the drag, **When** a node is dragged past an edge, **Then** the same guarantees hold during the drag.
 
 ---
 
-### User Story 3 - Correct at any zoom level (Priority: P2)
+### User Story 4 - Correct at any zoom level (Priority: P2)
 
 At zoom levels other than 100%, dragging past the top-left edge still keeps the node under the pointer.
 
@@ -114,18 +130,20 @@ At zoom levels other than 100%, dragging past the top-left edge still keeps the 
 
 ---
 
-### User Story 4 - No return of the feedback loop (Priority: P1)
+### User Story 5 - No return of the feedback loop (Priority: P1)
 
-Whatever the fix, the drag must remain stable: the canvas growing during a drag must not feed back into the pointer-to-diagram mapping and cause runaway movement.
+Whatever the fix, the drag must remain stable: the canvas must not feed back into the pointer-to-diagram mapping during a drag and cause runaway movement.
 
 **Why this priority**: This is the failure the existing mapping lock was introduced to prevent. A fix that reintroduces it trades one bug for another.
 
-**Independent Test**: An automated test that grows the canvas during a drag and checks the node's position stays a stable function of the pointer, with no runaway.
+**Independent Test**: An automated test that drags a node well past the top and left edges and checks the canvas size and `viewBox` do not change during the drag and the node's position stays a stable function of the pointer.
 
 **Acceptance Scenarios**:
 
-1. **Given** a drag that grows the canvas repeatedly, **When** the pointer holds still after growth, **Then** the node's position does not keep changing.
-2. **Given** a drag in progress, **When** the pointer moves back and forth across the growth threshold, **Then** the node's position stays consistent with the pointer and does not oscillate.
+1. **Given** a drag past the top or left edge, **When** the pointer moves during the drag, **Then** the SVG size and `viewBox` stay exactly as they were at drag start.
+2. **Given** a drag in progress, **When** the pointer holds still, **Then** the node's position does not keep changing.
+3. **Given** a drag in progress, **When** the pointer moves back and forth across the original edge, **Then** the node's position stays consistent with the pointer and does not oscillate.
+4. **Given** a completed drag, **When** the pointer is released, **Then** the size and `viewBox` are recomputed exactly once.
 
 ---
 
@@ -134,11 +152,12 @@ Whatever the fix, the drag must remain stable: the canvas growing during a drag 
 - Dragging past the top and the left edges at the same time (diagonal).
 - Dragging past the bottom or right edge, which should keep working as it does now.
 - Dragging a node that has children (children move with it) past the edge.
-- Cancelling a drag (`pointercancel`, for example a system gesture on iPad) mid-growth must leave the diagram in a sane state.
-- Releasing the pointer after the canvas has grown: any change to the final layout on release must not move nodes unexpectedly beyond what is deliberately specified.
-- Dragging back toward the interior after the canvas has grown.
+- Cancelling a drag (`pointercancel`, for example a system gesture on iPad) must leave the diagram in a sane state, with the canvas size consistent with the final node positions.
+- Releasing the pointer after the node was dragged outside the original bounds: content shifts once, without animation (see FR-009).
+- Dragging back toward the interior before release: the single recompute on release should then leave the layout consistent with the final node positions.
 - A pre-scrolled host container.
 - Zoom levels below and above 100%.
+- A node dragged outside the original bounds is drawn in full during the drag (not clipped by the SVG).
 
 ## Requirements *(mandatory)*
 
@@ -146,22 +165,24 @@ Whatever the fix, the drag must remain stable: the canvas growing during a drag 
 
 - **FR-001**: While a node is dragged in any direction, including past the top and left edges, its on-screen position equals the pointer's position (offset by the original grab point) within 1 px.
 - **FR-002**: While a node is dragged, the on-screen position of every node not being dragged (and not a child moving with it) stays within 1 px of its position at drag start.
-- **FR-003**: FR-001 and FR-002 hold when the diagram is vertically and horizontally centred in its pane, as in the playground.
+- **FR-003**: FR-001 and FR-002 hold in the playground, where the diagram is anchored to the top of the pane and horizontally centred.
 - **FR-004**: FR-001 and FR-002 hold when the diagram is placed top-left in a scrolling container, including when that container is already scrolled.
 - **FR-005**: FR-001 and FR-002 hold at zoom levels other than 100%.
-- **FR-006**: The canvas may still grow so a dragged node stays reachable and scrollable.
+- **FR-006**: The canvas still grows so a dragged node stays reachable and scrollable, but only once, on release (see FR-009).
 - **FR-007**: The runaway feedback loop that the existing screen-to-diagram mapping lock prevents does not recur.
 - **FR-008**: Mouse and touch drags behave the same, and pointer-event handling, including `pointercancel`, is preserved.
-- **FR-009**: [NEEDS CLARIFICATION: which approach to growing the canvas during a drag, see Open Question 1] determines how the canvas behaves during the drag and on release.
-- **FR-010**: [NEEDS CLARIFICATION: whether the playground should stop centring the diagram, see Open Question 2.] The renderer fix (FR-001 to FR-008) is required either way.
-- **FR-011**: A regression test drives a drag past the top-left edge and asserts on-screen positions of the dragged node and of the other nodes, using either real browser layout or a geometry-level unit test (see Open Question 3).
+- **FR-009**: For the whole duration of a drag, the diagram's SVG size and `viewBox` are frozen, and the dragged node may be drawn past the edges of the SVG (overflow visible while dragging). The size and `viewBox` are recomputed once on release. The resulting one-time shift of content when the diagram grows at the top or left is accepted, with no animation.
+- **FR-010**: The playground pins the diagram to the top of its canvas pane and no longer centres it vertically. Horizontal centring is kept. Centring must still not use a method that makes overflowing content unscrollable (the existing reason for not using `justify-content`/`align-items: center` on the pane stays).
+- **FR-011**: Automated geometry-level unit tests cover: no size or `viewBox` change during a drag; exactly one recompute on release; and the dragged node staying under the pointer when dragged past the top or left edge. A manual playground check complements them: long-press a boundary and confirm the diagram does not move, then drag a node above the top edge and confirm it tracks the pointer.
 - **FR-012**: An automated test covers the feedback-loop guarantee in FR-007.
+- **FR-013**: Opening or closing the add menu (long-press on a boundary) does not change the playground canvas pane's size and does not move any node on screen.
 
 ### Key Entities *(if applicable)*
 
-- **Canvas**: the drawing area whose size grows to contain a dragged node.
-- **Diagram coordinate origin**: the point that defines where diagram coordinates start. It moves when the canvas grows past the top or left.
-- **Pointer-to-diagram mapping**: the transform that converts a screen position into a diagram position, locked at drag start.
+- **Canvas**: the drawing area whose size is recomputed to contain the nodes. It is frozen during a drag and recomputed on release.
+- **Diagram coordinate origin**: the point that defines where diagram coordinates start. It moves when the canvas is recomputed after content extends past the top or left.
+- **Pointer-to-diagram mapping**: the transform that converts a screen position into a diagram position, locked at drag start and valid for the whole drag because the canvas does not change.
+- **Playground canvas pane**: the playground's container for the diagram. It anchors the diagram to the top and centres it horizontally.
 
 ## Success Criteria *(mandatory)*
 
@@ -169,24 +190,31 @@ Whatever the fix, the drag must remain stable: the canvas growing during a drag 
 
 - **SC-001**: In a drag that carries a node at least 160 px past the top edge or the left edge, the node's on-screen offset from the pointer stays within 1 px at every sampled step. Before the fix this offset reached about 41 px.
 - **SC-002**: The maximum on-screen displacement of any non-dragged node during a drag is at most 1 px.
-- **SC-003**: SC-001 and SC-002 hold in the centred playground pane, in a top-left scrolling host, and at zoom levels of at least 50% and 200%.
-- **SC-004**: With the pointer held still, the node's position is unchanged across consecutive updates after canvas growth.
-- **SC-005**: The regression and feedback-loop tests fail on `main` at `81b052a` and pass after the change.
+- **SC-003**: SC-001 and SC-002 hold in the playground's top-anchored pane, in a top-left scrolling host, and at zoom levels of at least 50% and 200%.
+- **SC-004**: With the pointer held still, the node's position is unchanged across consecutive updates, and the SVG size and `viewBox` are identical at every step of the drag.
+- **SC-005**: The automated regression and feedback-loop tests fail on `main` at `81b052a` and pass after the change.
+- **SC-006**: Opening the add menu changes the playground canvas pane's size by 0 px and moves every node by at most 1 px. Before the fix the pane grew by 24 px (946 → 970) and the diagram moved 12 px.
 
 ## Assumptions
 
 - The bug is reproduced with a mouse in Chromium, and iPad touch behaves the same, so one fix serves both input types.
 - The 1 px tolerance in the acceptance criteria is measured in screen (CSS) pixels.
 - Behaviour at the bottom and right edges is already correct (growth there does not shift content) and must only not regress.
+- A single, non-animated shift of content on release is acceptable when the diagram grows at the top or left (decided by the issue owner).
+- Hosts that need the viewport to stay put after release can handle that themselves in a later change (see Out of Scope).
 - Following the project convention, any ADR written for this work is numbered `100`.
 
 ## Out of Scope *(optional)*
 
+- Scroll compensation for hosts, meaning the renderer reporting how far its frame shifted so a host can scroll to match. Deferred until liminis-editor#194 adopts the new version.
+- Touch-drag cancellation (`pointercancel` on the first move). This is being checked on real hardware and will be filed separately if it is real.
 - Changes to drag behaviour unrelated to canvas growth (snapping, collision, multi-select).
 - Redesigning zoom or pan.
 - New diagram editing features.
+- Animating the shift on release.
 
 ## Source References *(optional)*
 
 - Issue #100 original report, including the Chromium measurement table on `main` (`81b052a`)
+- Issue owner's iPad simulator finding (iPad Pro 11-inch, iPadOS 26.2, playground debug overlay): the long-press add menu grows the canvas pane from 946 to 970 px, shifting the vertically centred diagram down 12 px with no page scroll
 - Related: #92 and #94 (structural editing) made the bug more visible
