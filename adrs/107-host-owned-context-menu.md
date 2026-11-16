@@ -53,5 +53,7 @@ should be able to show **one** menu holding both sets of items.
   including outside edit mode. React delegates at the root, so this stops React ancestors; a
   native listener on a non-root ancestor DOM node still sees the event.
 - The host draws, positions and dismisses the menu, and must close it (and return focus) around
-  `select()`: the label input the renderer shows cancels on blur.
+  `select()`: the label input the renderer shows cancels on blur. An item's `select()` is a
+  no-op while a label or rename input is still open, as the built-in menu could not open then
+  either, so a non-modal host menu cannot stack a second overlay on the first.
 - Context-menu items for existing nodes (delete, rename…) are not offered; the hook reports `[]` there.

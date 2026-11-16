@@ -306,6 +306,24 @@ describe('onContextMenu: swallowed states', () => {
     rightClick(container, { x: 950, y: 950 });
     expect(onContextMenu).toHaveBeenCalledTimes(2);
   });
+
+  it('select() is a no-op while a label input is open, so the first add is not replaced', () => {
+    const { container, onContextMenu, onEdit } = setup();
+    rightClick(container, { x: 900, y: 900 });
+    const first = onContextMenu.mock.calls[0][0];
+    act(() => first.items[0].select());
+    const input = labelInput(container)!;
+    fireEvent.change(input, { target: { value: 'First' } });
+
+    // A non-modal host menu opened over the open input and picked another kind.
+    rightClick(container, { x: 300, y: 300 });
+    act(() => onContextMenu.mock.calls[1][0].items[2].select());
+
+    expect(container.querySelectorAll('[data-c4-label-input]')).toHaveLength(1);
+    expect(labelInput(container)!.value).toBe('First');
+    confirmLabel(container);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('onContextMenu: long-press', () => {

@@ -973,7 +973,9 @@ export function C4InteractiveRenderer({
     if (p) {
       const parent = findBoundaryAt(layout.nodes, p)?.id;
       items = buildMenuItems((choice) => {
-        if (!canEditRef.current) return;
+        // No-op once edit mode is off, or while a label or rename input is open: the built-in
+        // menu cannot open then either, and a second overlay must not stack on the first.
+        if (!canEditRef.current || busyRef.current) return;
         // The parent may have gone since the request: then it is a top-level add.
         const stillThere = parent !== undefined && layoutNodesRef.current.some((n) => n.id === parent);
         startPendingAdd(choice, stillThere ? { x: p.x, y: p.y, parent } : { x: p.x, y: p.y });
