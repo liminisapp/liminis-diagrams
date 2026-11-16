@@ -16,29 +16,11 @@
 
 import type { JSX } from 'react';
 import { useEffect, useRef } from 'react';
-import type { C4AddableBoundaryKind, C4AddableElementKind } from '../core/alias';
 import { C4_ADDABLE_BOUNDARY_KINDS, C4_ADDABLE_ELEMENT_KINDS } from '../core/alias';
+import type { EditMenuChoice } from './menuItems';
+import { BOUNDARY_KIND_LABELS, ELEMENT_KIND_LABELS } from './menuItems';
 
-const KIND_LABELS: Record<C4AddableElementKind, string> = {
-  person: 'Person',
-  system: 'System',
-  container: 'Container',
-  component: 'Component',
-  systemDb: 'System DB',
-  containerDb: 'Container DB',
-  componentDb: 'Component DB',
-};
-
-const BOUNDARY_KIND_LABELS: Record<C4AddableBoundaryKind, string> = {
-  systemBoundary: 'System boundary',
-  containerBoundary: 'Container boundary',
-  boundary: 'Boundary',
-};
-
-/** What the user picked: an element kind or a boundary kind. */
-export type EditMenuChoice =
-  | { group: 'element'; kind: C4AddableElementKind }
-  | { group: 'boundary'; kind: C4AddableBoundaryKind };
+export type { EditMenuChoice };
 
 export interface EditMenuProps {
   /** Position in the SVG wrapper's coordinate space (px) */
@@ -164,7 +146,7 @@ export function EditMenu({
             onClick={() => onSelect({ group: 'element', kind })}
             style={itemStyle}
           >
-            {KIND_LABELS[kind]}
+            {ELEMENT_KIND_LABELS[kind]}
           </button>
         ))}
       </div>
