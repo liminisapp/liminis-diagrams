@@ -184,7 +184,9 @@ things. (A host that passes `isEditMode` for dragging alone sees no change at al
   focus cancels and reports nothing. The menu itself closes on Escape, a click outside it,
   or `pointercancel` of the pointer that opened it, and reports nothing. While editing is
   on the browser's own context menu is suppressed over the diagram; a read-only render,
-  and a host that passes `isEditMode` without `onEdit`, keep it.
+  and a host that passes `isEditMode` without `onEdit`, keep it. (A host that already has
+  its own context menu passes `onContextMenu` instead, and the renderer draws no menu of
+  its own: see "One menu, not two" below.)
 - **Add a boundary.** The same menu has a second group, set apart by a rule and a small
   heading, listing the boundary kinds: System boundary, Container boundary and Boundary
   (`System_Boundary`, `Container_Boundary`, `Boundary`). The label flow is the same as for
@@ -228,7 +230,8 @@ things. (A host that passes `isEditMode` for dragging alone sees no change at al
   through `onEdit` only, never `onPositionChange`.
 
 The menu opens over empty canvas or a boundary, not over an element, a connect handle, a
-relationship label or the legend (the native menu is still suppressed there).
+relationship label or the legend (the native menu is still suppressed there). With
+`onContextMenu` the host is still called on all of those, with no items.
 
 Dragging a node still moves it; the connect handle is a separate target, and the two
 gestures are mutually exclusive. All of it uses pointer events and handles
@@ -309,6 +312,81 @@ elements, diffing the source each time.
 **Verified** by that test: each action inserts exactly one contiguous block (one line, or
 two for a boundary) and no other line changes; previously positioned elements keep their positions; the first edit on a diagram
 with no manual positions moves no element.
+
+### One menu, not two
+
+If your host already has a context menu on the diagram, the renderer's own menu would open
+beside it. Pass `onContextMenu` and the renderer draws **no** menu: it hands you the click
+position and the diagram's actions, and you show one menu with your items and its together.
+
+> Available in the release after 0.2.0. The docs-site playground is pinned to the
+> published package and has no host menu of its own to merge into, so it does not demo
+> this; the snippet below is the whole recipe.
+
+```tsx
+import { useState } from 'react';
+import { C4InteractiveRenderer } from '@liminis/diagrams/react';
+import type { C4ContextMenuRequest } from '@liminis/diagrams/react';
+
+function DiagramWithMenu(props: React.ComponentProps<typeof C4InteractiveRenderer>) {
+  const [menu, setMenu] = useState<C4ContextMenuRequest | null>(null);
+
+  return (
+    <div onContextMenu={(e) => e.preventDefault() /* never reached over the diagram: the renderer stops it */}>
+      <C4InteractiveRenderer {...props} onContextMenu={setMenu} />
+      {menu && (
+        <div role="menu" style={{ position: 'fixed', left: menu.clientX, top: menu.clientY }}>
+          <button role="menuitem" onClick={() => { copyImage(); setMenu(null); }}>
+            Copy image to clipboard
+          </button>
+          {(['element', 'boundary'] as const).map((group) => {
+            const items = menu.items.filter((i) => i.group === group);
+            return items.length > 0 && (
+              <div role="group" aria-label={group === 'element' ? 'Add element' : 'Add boundary'} key={group}>
+                {items.map((item) => (
+                  <button
+                    role="menuitem"
+                    key={item.id}
+                    onClick={() => {
+                      setMenu(null); // close first: the label prompt takes focus
+                      item.select();
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+What to know:
+
+- **`items` is `[]` where the diagram has nothing to add**: over a node, a relationship label, a
+  connect handle or the legend, outside edit mode, and in edit mode without `onEdit`. The hook
+  is still called there, so your own items are reachable everywhere. Show your menu with
+  whatever `items` holds.
+- **Each item has a stable `id`** (`add:element:person`, `add:boundary:systemBoundary`, …), the
+  same `label` as the built-in menu, and a `group` (`element` or `boundary`; elements come
+  first). `select()` does what choosing it in the built-in menu does: places the new element
+  centred on the point you were called for (inside the enclosing boundary if there is one),
+  then shows the label prompt and, on Enter, reports the edit through `onEdit`.
+- **Long-press** (touch and pen, edit mode only) calls the same hook with `pointerId` set.
+  Outside edit mode there is no long-press: use your own gesture for a touch menu.
+- **Close your menu, and return focus, when an item is picked.** The label prompt the renderer
+  shows cancels when it loses focus, so a menu that keeps focus after `select()` would cancel
+  it at once. You own closing it, too: the renderer keeps nothing between the call and
+  `select()`, so a menu you dismiss without choosing leaves nothing behind.
+- **The renderer stops the event.** It calls `preventDefault()` and `stopPropagation()`, so a
+  React `onContextMenu` on an ancestor does not fire a second menu. React listens at the root,
+  so a native `addEventListener('contextmenu')` on a non-root ancestor element still sees it.
+  A right-click during a drag or a connect is swallowed without a call.
+- Without `onContextMenu` nothing changes.
 
 ### `applyC4Edit`, headless
 

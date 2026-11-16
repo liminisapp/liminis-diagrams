@@ -112,6 +112,13 @@ import { applyC4Edit } from '@liminis/diagrams/core';
 />
 ```
 
+Already have your own context menu on the diagram? Pass `onContextMenu` and the renderer draws
+no menu of its own: on right-click (and long-press in edit mode) it calls you with the position
+and the diagram's add-element and add-boundary items, each with a `select()`, so you can show
+**one** menu with your items and its together. It stops the event so your ancestor handler does
+not open a second menu, and calls you with `items: []` where the diagram has nothing to offer.
+See "One menu, not two" in the recipes.
+
 The same callback reports a **rename**: double-click an element (on touch: tap it, then
 **Rename** in the bar that appears), or double-click a relationship's label (long-press on
 touch), edit the label inline, and `onEdit` receives
