@@ -147,6 +147,11 @@ describe('onContextMenu: right-click', () => {
       (b) => b.textContent,
     );
     expect(builtInLabels).toEqual(LABELS);
+
+    const hooked = setup();
+    rightClick(hooked.container, { x: 900, y: 900 });
+    const hookLabels = hooked.onContextMenu.mock.calls[0][0].items.map((i) => i.label);
+    expect(hookLabels).toEqual(builtInLabels);
   });
 
   it('suppresses the browser menu and stops an ancestor onContextMenu', () => {
