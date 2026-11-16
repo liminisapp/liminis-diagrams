@@ -149,7 +149,7 @@ A host that does not supply the hook sees no change. A host author finds a docum
 
 ### Edge Cases
 
-- A right-click while a drag is in flight, or while the renderer is busy: swallowed as it is today (default menu suppressed), and the hook is not called.
+- A right-click while a drag or a connect is in flight: swallowed (default menu suppressed, propagation stopped), and the hook is not called.
 - A right-click while a label input, rename input or other overlay is open: handled like any other right-click; the hook is called.
 - A request whose items are never used (the host closed its menu): nothing is left pending in the renderer. No state is retained between the hook call and `select()`.
 - An item's `select()` called after the diagram changed: the placement uses the point and enclosing boundary captured when the request was made, not a stale or re-hit-tested position. If that boundary no longer exists, the item behaves as at top level (or is a no-op); it must not throw.
@@ -172,7 +172,7 @@ A host that does not supply the hook sees no change. A host author finds a docum
 - **FR-009**: A right-click on a node, relationship label, connect handle, legend, or anywhere the built-in menu currently refuses to open, calls the hook with `items: []`.
 - **FR-010**: With the hook supplied and edit mode off, or edit mode on without `onEdit`, a right-click calls the hook with `items: []`.
 - **FR-011**: When the hook is supplied, the renderer handles the context-menu event once: it suppresses the browser default menu and stops propagation, so an ancestor `onContextMenu` handler does not fire.
-- **FR-012**: A right-click during a drag, or while the renderer is busy, is swallowed without calling the hook, as today's menu is not opened in those states.
+- **FR-012**: A right-click during a drag or a connect is swallowed without calling the hook. An open label or rename input does not count as busy for this purpose: the hook is still called (see Edge Cases). While such an input is open, an item's `select()` is a no-op.
 - **FR-013**: Calling an item's `select()` is equivalent to picking that kind in the built-in menu at the point where the request was made: the new element or boundary is centred on that point, a new nested boundary is clamped inside its enclosing boundary's content area, the enclosing boundary becomes the new item's parent, and the existing label-prompt flow then reports the edit and positions through `onEdit`.
 - **FR-014**: The point and enclosing boundary used by `select()` are those captured when the request was made. The renderer keeps no menu state of its own between the hook call and `select()`.
 - **FR-015**: Opening the host menu clears any selected element, as opening the built-in menu does.
@@ -200,7 +200,7 @@ A host that does not supply the hook sees no change. A host author finds a docum
 - **Outside edit mode the hook still fires on right-click.** When the hook is supplied, the renderer takes ownership of the context-menu event over the whole diagram, with `items: []` where it has no actions (the issue's "outside edit mode while still interactive"). Without edit mode there are no diagram actions to offer, and a host that passes the hook accepts that propagation stops at the renderer.
 - **Long-press is unchanged outside edit mode.** The long-press gesture exists today only for editing; this issue does not enable it elsewhere. In non-edit mode a host that wants a touch menu uses its own gesture.
 - **Without `onEdit`, items are empty.** Edit mode alone, with no way to report an edit, offers no add actions, matching today's rule that the built-in menu appears only with both.
-- **Right-click while busy or mid-drag is swallowed silently**, with no hook call, consistent with the built-in menu being unavailable then.
+- **Right-click mid-drag or mid-connect is swallowed silently**, with no hook call. An open label or rename input does not swallow it: the hook is called as for any other right-click, and `select()` is a no-op until the input closes.
 - **The host owns closing its menu.** The renderer has nothing to close; a host that dismisses its menu simply never calls `select()`.
 - **Labels are the existing built-in labels**; localisation is not part of this issue.
 - The final type and field names are the Plan stage's call; the issue's sketch is a starting point, and the requirements above fix behaviour, not names.
