@@ -15,6 +15,7 @@ export type {
 
 export { C4InteractiveRenderer, LEGEND_POSITION_ID } from './react/C4InteractiveRenderer';
 export type { C4InteractiveRendererProps, C4EditContext } from './react/C4InteractiveRenderer';
+export type { C4MenuItem, C4ContextMenuRequest } from './react/menuItems';
 
 export { useC4DiagramDrag } from './react/hooks/useC4DiagramDrag';
 export type { C4DragInfo } from './react/hooks/useC4DiagramDrag';
