@@ -40,7 +40,8 @@ import { findBoundaryAt, findElementAt } from './hit-test';
 import { clampIntoBoundary, decideReparent, findDropTarget } from './reparent-drop';
 import { LONG_PRESS_MOVE_TOLERANCE, useC4LongPress } from './hooks/useC4LongPress';
 import { ActionBar } from './ActionBar';
-import { EditMenu, type EditMenuChoice } from './EditMenu';
+import { EditMenu } from './EditMenu';
+import { buildMenuItems, type C4ContextMenuRequest, type EditMenuChoice } from './menuItems';
 import { LabelInput } from './LabelInput';
 
 /** Synthetic ID used to store legend position in manual positions map */
@@ -58,6 +59,9 @@ export interface C4EditContext {
    */
   positions: Record<string, { x: number; y: number }>;
 }
+
+/** A native `contextmenu` this soon after a long-press is the same gesture (host menu path). */
+const HOST_REQUEST_DEDUPE_MS = 750;
 
 /** Default size of a freshly placed node, matching what layout gives new nodes. */
 function defaultNodeSize(choice: EditMenuChoice): { width: number; height: number } {
@@ -176,6 +180,28 @@ export interface C4InteractiveRendererProps {
    */
   onEdit?: (edit: C4Edit, context: C4EditContext) => void;
   /**
+   * Let the host own the context menu. When supplied, the renderer never draws its
+   * own add-element menu; on a right-click or (in edit mode) a long-press it calls
+   * this with the position and the diagram's actions at that point, so the host can
+   * show **one** menu holding its own items and the diagram's.
+   *
+   * It is called for every right-click on the diagram, with `items: []` where the
+   * diagram has nothing to offer (on a node, a relationship label, the legend, a
+   * connect handle, outside edit mode, or in edit mode without `onEdit`), so the
+   * host's own items stay reachable everywhere. The renderer handles the event once:
+   * it calls `preventDefault()` and `stopPropagation()`, so a host handler on an
+   * ancestor does not open a second menu. A right-click during a drag or a connect
+   * is swallowed without a call.
+   *
+   * Calling `item.select()` is the same as picking that kind in the built-in menu at
+   * the point the request was made: the renderer shows its label prompt and then
+   * reports the edit through `onEdit`. The renderer keeps no menu state between the
+   * request and `select()`; a host that closes its menu simply never calls it.
+   *
+   * Without this prop the built-in menu is used and propagation is unchanged.
+   */
+  onContextMenu?: (request: C4ContextMenuRequest) => void;
+  /**
    * Scale factor for the rendered diagram. 1 is actual size; 2 draws it twice as
    * large. Defaults to 1, so a host that does not care is unaffected.
    *
@@ -270,6 +296,7 @@ export function C4InteractiveRenderer({
   manualPositions,
   onPositionChange,
   onEdit,
+  onContextMenu,
   zoom = 1,
   onFrameChange,
 }: C4InteractiveRendererProps): JSX.Element {
@@ -635,6 +662,11 @@ export function C4InteractiveRenderer({
   draggedNodeIdRef.current = draggedNodeId;
   const busyRef = useRef(false);
   busyRef.current = menu !== null || pending !== null || pendingRel !== null || renaming !== null;
+  // Read by a host item's `select()`, which may run after this render has been replaced.
+  const layoutNodesRef = useRef(layout.nodes);
+  layoutNodesRef.current = layout.nodes;
+  const canEditRef = useRef(canEdit);
+  canEditRef.current = canEdit;
 
   const { connectSourceId, connectPointer, startConnect } = useC4ConnectDrag({
     svgRef,
@@ -691,6 +723,14 @@ export function C4InteractiveRenderer({
       setSelectedId(null);
     }
   }, [canEdit]);
+
+  // A host that takes over the menu must not be left with a built-in one still open
+  // (it would hold `busyRef` true). Reverting to `undefined` needs nothing: the
+  // handlers read the current prop.
+  const hostOwnsMenu = onContextMenu !== undefined;
+  useEffect(() => {
+    if (hostOwnsMenu) setMenu(null);
+  }, [hostOwnsMenu]);
 
   // The selected alias vanishing (the diagram changed under it) clears the selection.
   useEffect(() => {
@@ -851,6 +891,7 @@ export function C4InteractiveRenderer({
       // positions to the host.
       abortMoveDrag();
       if (press.kind === 'relationship') startRenameRelationship(press.index, true);
+      else if (onContextMenu) requestHostMenuFrom('longpress', clientX, clientY, pointerId, true);
       else openMenuAt(clientX, clientY, pointerId);
     },
   });
@@ -884,24 +925,87 @@ export function C4InteractiveRenderer({
     openMenuAt(e.clientX, e.clientY, null);
   };
 
-  const handleSelectKind = (choice: EditMenuChoice) => {
-    if (!menu) return;
+  /**
+   * Place a new element or boundary centred on a point and start its label prompt.
+   * Shared by the built-in menu and a host item's `select()`, so they cannot differ.
+   */
+  const startPendingAdd = (choice: EditMenuChoice, at: { x: number; y: number; parent?: string }) => {
     const size = defaultNodeSize(choice);
-    let x = Math.round(menu.x - size.width / 2);
-    let y = Math.round(menu.y - size.height / 2);
-    if (choice.group === 'boundary' && menu.parent !== undefined) {
+    let x = Math.round(at.x - size.width / 2);
+    let y = Math.round(at.y - size.height / 2);
+    if (choice.group === 'boundary' && at.parent !== undefined) {
       // Keep a new nested boundary inside its parent's content area. Left of or above it, the
       // parent would shift its own origin to contain the child, moving a node that already has a position.
-      const parentNode = layout.nodes.find((n) => n.id === menu.parent);
+      const parentNode = layoutNodesRef.current.find((n) => n.id === at.parent);
       if (parentNode) {
         x = Math.max(x, parentNode.x + BOUNDARY_PADDING);
         y = Math.max(y, parentNode.y + BOUNDARY_HEADER_HEIGHT);
       }
     }
     const next = { target: choice.group, kind: choice.kind, x, y, ...size } as PendingAdd;
-    if (menu.parent !== undefined) next.parent = menu.parent;
-    setMenu(null);
+    if (at.parent !== undefined) next.parent = at.parent;
     setPending(next);
+  };
+
+  const handleSelectKind = (choice: EditMenuChoice) => {
+    if (!menu) return;
+    setMenu(null);
+    startPendingAdd(choice, menu);
+  };
+
+  // --- Host-owned context menu (`onContextMenu`) ---------------------------------
+  // The last request and where it came from. A browser may fire a native
+  // `contextmenu` after a long-press; without this the host would be asked twice for
+  // one gesture. Transient bookkeeping, not menu state.
+  const lastHostRequestRef = useRef<{ at: number; source: 'longpress' | 'contextmenu' } | null>(null);
+
+  /** Hand the host a request. `menuPoint` is true where the diagram has add actions. */
+  const requestHostMenu = (
+    clientX: number,
+    clientY: number,
+    pointerId: number | null,
+    menuPoint: boolean,
+  ) => {
+    if (!onContextMenu) return;
+    setSelectedId(null);
+    let items: C4ContextMenuRequest['items'] = [];
+    const p = canEdit && menuPoint ? toSvgPoint(clientX, clientY) : null;
+    if (p) {
+      const parent = findBoundaryAt(layout.nodes, p)?.id;
+      items = buildMenuItems((choice) => {
+        if (!canEditRef.current) return;
+        // The parent may have gone since the request: then it is a top-level add.
+        const stillThere = parent !== undefined && layoutNodesRef.current.some((n) => n.id === parent);
+        startPendingAdd(choice, stillThere ? { x: p.x, y: p.y, parent } : { x: p.x, y: p.y });
+      });
+    }
+    onContextMenu({ clientX, clientY, pointerId, items });
+  };
+
+  /** Run a host request unless the other gesture of the same press just made one. */
+  const requestHostMenuFrom = (
+    source: 'longpress' | 'contextmenu',
+    clientX: number,
+    clientY: number,
+    pointerId: number | null,
+    menuPoint: boolean,
+  ) => {
+    const now = Date.now();
+    const last = lastHostRequestRef.current;
+    if (last && last.source !== source && now - last.at < HOST_REQUEST_DEDUPE_MS) return;
+    lastHostRequestRef.current = { at: now, source };
+    requestHostMenu(clientX, clientY, pointerId, menuPoint);
+  };
+
+  const handleHostContextMenu = (e: React.MouseEvent) => {
+    // One handler for the whole diagram: the host's own handler on an ancestor must not fire.
+    e.preventDefault();
+    e.stopPropagation();
+    // A drag or a connect in flight swallows it. Open label inputs do not: the host's
+    // menu is not ours to gate.
+    if (draggedNodeIdRef.current !== null || connectSourceId !== null) return;
+    const menuPoint = isMenuTarget(e.target, e.clientX, e.clientY);
+    requestHostMenuFrom('contextmenu', e.clientX, e.clientY, null, menuPoint);
   };
 
   const handleConfirmLabel = (value: string) => {
@@ -981,10 +1085,11 @@ export function C4InteractiveRenderer({
       zoom={zoom}
       growthCapped={growthCapped}
       onFrameChange={onFrameChange}
+      onHostContextMenu={onContextMenu ? handleHostContextMenu : undefined}
       editing={
         canEdit
           ? {
-              menu,
+              menu: hostOwnsMenu ? null : menu,
               pending,
               pendingRel,
               renaming,
@@ -1033,6 +1138,8 @@ interface C4InteractiveSvgProps {
   /** Frame growth is paused (fit mode, pointer near the container edge). */
   growthCapped: boolean;
   onFrameChange?: (size: { width: number; height: number }) => void;
+  /** Host-owned context menu: attached whether or not editing is on, and replaces the built-in handler. */
+  onHostContextMenu?: (e: React.MouseEvent) => void;
   /** Structural-editing state and handlers; null when editing is not enabled. */
   editing: EditingProps | null;
 }
@@ -1092,6 +1199,7 @@ function C4InteractiveSvg({
   zoom,
   growthCapped,
   onFrameChange,
+  onHostContextMenu,
   editing,
 }: C4InteractiveSvgProps): JSX.Element {
   // Guarded here as well as in C4Renderer: both are public entry points, and a
@@ -1290,7 +1398,7 @@ function C4InteractiveSvg({
           }
           editing.onLongPressPointerDown(e);
         } : undefined}
-        onContextMenu={editing ? editing.onContextMenu : undefined}
+        onContextMenu={onHostContextMenu ?? editing?.onContextMenu}
         style={{
           fontFamily: 'system-ui, -apple-system, sans-serif',
           cursor: isEditMode ? (draggedNodeId ? 'grabbing' : 'default') : 'default',
