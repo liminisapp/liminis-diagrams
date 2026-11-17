@@ -668,15 +668,21 @@ export function C4InteractiveRenderer({
     liveMapping: !holdOrigin,
   });
 
-  // `onOriginShift` is wrapped so the outer component knows a shift happened in
+  // `onOriginShift` is wrapped so the outer component knows the host scrolled in
   // this commit (see the effect below). Only with the opt-out: otherwise the
   // callback is never called.
   const onOriginShiftRef = useRef(onOriginShift);
   onOriginShiftRef.current = onOriginShift;
   const shiftedRef = useRef(false);
   const handleOriginShift = useCallback((shift: { dx: number; dy: number }) => {
-    shiftedRef.current = true;
+    // Remap only if the host moved the svg on screen inside its callback (scrolled).
+    // A host that does nothing leaves the origin shifted; remapping then would chase
+    // the shift and run away, the feedback #100 removed.
+    const svg = svgRef.current;
+    const before = svg?.getScreenCTM();
     onOriginShiftRef.current?.(shift);
+    const after = svg?.getScreenCTM();
+    if (before && after && (before.e !== after.e || before.f !== after.f)) shiftedRef.current = true;
   }, []);
 
   // The host absorbed an origin shift (scrolled) during this commit. If it scrolled
