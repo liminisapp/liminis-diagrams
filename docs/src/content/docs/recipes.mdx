@@ -538,3 +538,72 @@ targeting. It has two `role="group"`s: element items carry `data-kind`, boundary
 carry `data-boundary-kind`. It replaces the toolbar palette (`data-c4-palette`)
 of earlier drafts, which no longer exists. The inline label inputs — for an element and
 for a relationship, and for a boundary — carry `data-c4-label-input`.
+
+## Recipe 5: a scrolling host absorbs the origin shift
+
+While a node is dragged past the top or left edge the frame grows and the diagram origin
+moves inside the `<svg>`'s box. By default the renderer cancels that with a temporary CSS
+`transform` on the `<svg>`. A transform paints outside the element's layout box, so a host
+whose container clips (any `overflow` other than `visible`) cuts off the grown strip,
+including the node being dragged, until release. Down and right never have this problem,
+because the box simply grows.
+
+To make all four edges behave alike, opt out of the transform and scroll by the amount the
+origin moved:
+
+```tsx
+import { useRef, useState } from 'react';
+import { parseC4 } from '@liminis/diagrams/core';
+import { C4InteractiveRenderer } from '@liminis/diagrams/react';
+
+function ScrollingHost({ source }: { source: string }) {
+  const { diagram } = parseC4(source);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const scroller = useRef<HTMLDivElement>(null);
+
+  if (!diagram) return null;
+
+  return (
+    <div ref={scroller} style={{ overflow: 'auto', height: 600 }}>
+      <C4InteractiveRenderer
+        diagram={diagram}
+        isDarkMode={false}
+        isEditMode={true}
+        manualPositions={positions}
+        onPositionChange={setPositions}
+        holdOrigin={false}
+        onOriginShift={({ dx, dy }) => {
+          scroller.current!.scrollLeft += dx;
+          scroller.current!.scrollTop += dy;
+        }}
+      />
+    </div>
+  );
+}
+```
+
+How it behaves:
+
+- `holdOrigin={false}`: the renderer never sets a `transform` on the `<svg>`, at any edge,
+  during or after a drag. The svg's box is always the whole drawing, so the container's
+  scroll extent grows and nothing is clipped or spilled.
+- `onOriginShift` is called from a layout effect in the same commit as the frame change, so
+  before paint. Scrolling inside it produces no visible jump.
+- `dx` and `dy` are rendered CSS px (user-space shift times the rendered scale, so correct
+  when your CSS or `zoom` shrinks the svg), and are the displacement since the previous
+  commit, not a running total. Positive means the origin moved right/down, so adding them to
+  the scroll offsets keeps it still.
+- It is only called while a node is being dragged, never for growth at the bottom or right
+  only, and never for a zero shift. Shrinking at the top/left, including a cancel
+  (pointercancel, Escape) that returns to the pre-drag frame, reports the opposite sign, so
+  the same code restores your scroll.
+- It is only called with `holdOrigin={false}`. In the default mode the renderer's own
+  transform already compensates, so scrolling as well would compensate twice.
+- Pointer mapping uses the live geometry in this mode, so a scroll that is not exactly the
+  reported amount (browsers round scroll positions, and clamp them) does not leave the node
+  drifting from the pointer.
+- Release causes no extra shift: there is no transform to drop.
+
+If you set `holdOrigin={false}` and do not compensate (no callback, or nothing to scroll),
+the drawing shifts on screen as the frame grows. The renderer neither prevents nor works
+around that.
