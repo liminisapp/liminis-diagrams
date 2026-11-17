@@ -208,3 +208,44 @@ describe('useC4DiagramDrag: scale change and remap (#104)', () => {
     expect(remap()).toBe(false);
   });
 });
+
+describe('useC4DiagramDrag: liveMapping (#110)', () => {
+  // A CTM stub whose translation `e`/`f` the test can change mid-drag (a host that scrolls).
+  let tx = 0;
+  let ty = 0;
+  beforeEach(() => {
+    tx = 0;
+    ty = 0;
+    const proto = window.SVGSVGElement?.prototype as unknown as Record<string, unknown>;
+    proto.getScreenCTM = function getScreenCTM() {
+      const t = { x: tx, y: ty };
+      return { a: 1, d: 1, e: t.x, f: t.y, inverse: () => ({ a: 1, d: 1, e: -t.x, f: -t.y }) };
+    };
+    proto.createSVGPoint = function createSVGPoint() {
+      return {
+        x: 0,
+        y: 0,
+        matrixTransform(m: { a: number; e: number; d: number; f: number }) {
+          return { x: m.a * this.x + m.e, y: m.d * this.y + m.f };
+        },
+      };
+    };
+  });
+
+  it('keeps the locked mapping by default when the translation changes mid-drag', () => {
+    const onNodeDrag = vi.fn();
+    setup({ onNodeDrag });
+    ty = 30; // the host scrolled
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag.mock.calls[0].slice(1, 3)).toEqual([100, 50]);
+  });
+
+  it('follows a mid-drag change of the translation with liveMapping', () => {
+    const onNodeDrag = vi.fn();
+    setup({ onNodeDrag, liveMapping: true });
+    ty = 30;
+    tx = -10;
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 50 });
+    expect(onNodeDrag.mock.calls[0].slice(1, 3)).toEqual([110, 20]);
+  });
+});

@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { findScrollContainerRect, isInsideGrowthMargin, scaleDiffers, GROWTH_CAP_MARGIN_PX } from './dragFrame';
+import {
+  findScrollContainerRect,
+  isInsideGrowthMargin,
+  scaleDiffers,
+  originOffset,
+  originShift,
+  GROWTH_CAP_MARGIN_PX,
+} from './dragFrame';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -56,5 +63,44 @@ describe('findScrollContainerRect', () => {
       right: window.innerWidth,
       bottom: window.innerHeight,
     });
+  });
+});
+
+describe('originOffset / originShift (#110)', () => {
+  const f = (viewBoxX: number, viewBoxY: number, scale = 1) => ({ viewBoxX, viewBoxY, scale });
+
+  it('originOffset is -viewBox * scale, with no negative zero', () => {
+    expect(originOffset(f(-20, -10, 0.5))).toEqual({ x: 10, y: 5 });
+    expect(Object.is(originOffset(f(0, 0, 2)).x, 0)).toBe(true);
+  });
+
+  it('reports top and left growth as a positive (right/down) shift', () => {
+    expect(originShift(f(0, 0), f(-30, -40))).toEqual({ dx: 30, dy: 40 });
+  });
+
+  it('reports shrink with the opposite sign', () => {
+    expect(originShift(f(-30, -40), f(-10, 0))).toEqual({ dx: -20, dy: -40 });
+  });
+
+  it('reports one axis only when only that axis grew', () => {
+    expect(originShift(f(0, 0), f(0, -25))).toEqual({ dx: 0, dy: 25 });
+  });
+
+  it('is null for a frame that only changed at the bottom/right', () => {
+    expect(originShift(f(-10, -10), f(-10, -10))).toBeNull();
+  });
+
+  it('multiplies by the rendered scale', () => {
+    expect(originShift(f(0, 0, 0.5), f(-30, -40, 0.5))).toEqual({ dx: 15, dy: 20 });
+  });
+
+  it('uses each commit\'s own scale: a pure scale change with viewBox != 0 is a real shift', () => {
+    expect(originShift(f(-40, -40, 1), f(-40, -40, 0.5))).toEqual({ dx: -20, dy: -20 });
+  });
+
+  it('keeps fractional values unrounded', () => {
+    const s = originShift(f(0, 0, 0.3), f(-1.5, -0.7, 0.3))!;
+    expect(s.dx).toBeCloseTo(0.45, 10);
+    expect(s.dy).toBeCloseTo(0.21, 10);
   });
 });
