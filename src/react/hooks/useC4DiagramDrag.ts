@@ -54,6 +54,15 @@ export interface UseC4DiagramDragProps {
   onNodeDragCancel?: (nodeId: string) => void;
   /** Whether drag interaction is enabled */
   enabled: boolean;
+  /**
+   * Always map the pointer through the live `getScreenCTM()` instead of the matrix
+   * locked at drag start. For a host that keeps the diagram origin still by
+   * scrolling rather than by the renderer's hold transform (#110): its scroll can
+   * be inexact (rounded, clamped), so a locked matrix would leave the node
+   * drifting from the pointer. Default false (the locked matrix is used while the
+   * rendered scale is unchanged).
+   */
+  liveMapping?: boolean;
 }
 
 export interface UseC4DiagramDragReturn {
@@ -106,6 +115,7 @@ export function useC4DiagramDrag({
   onNodeDragEnd,
   onNodeDragCancel,
   enabled,
+  liveMapping = false,
 }: UseC4DiagramDragProps): UseC4DiagramDragReturn {
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
 
@@ -148,7 +158,9 @@ export function useC4DiagramDrag({
   /**
    * Convert screen (client) coordinates to SVG coordinates.
    * Uses the locked CTM from drag start while the rendered scale is unchanged,
-   * and the live CTM when the scale has changed or nothing is locked.
+   * and the live CTM when the scale has changed or nothing is locked. With
+   * `liveMapping` it is always the live CTM (the locked matrix is stale as soon as
+   * the host scrolls by anything other than the exact origin shift).
    */
   const screenToSvg = useCallback(
     (clientX: number, clientY: number): { x: number; y: number } | null => {
@@ -159,7 +171,7 @@ export function useC4DiagramDrag({
       point.x = clientX;
       point.y = clientY;
 
-      let inverse = lockedCtmInverseRef.current;
+      let inverse = liveMapping ? null : lockedCtmInverseRef.current;
       const lockedScale = lockedScaleRef.current;
       if (inverse && lockedScale !== null) {
         const live = svg.getScreenCTM();
@@ -171,7 +183,7 @@ export function useC4DiagramDrag({
       const svgPoint = point.matrixTransform(inverse);
       return { x: svgPoint.x, y: svgPoint.y };
     },
-    [svgRef]
+    [svgRef, liveMapping]
   );
 
   const screenToSvgRef = useRef(screenToSvg);

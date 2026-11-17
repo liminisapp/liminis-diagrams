@@ -68,3 +68,35 @@ export function isInsideGrowthMargin(rect: Rect, x: number, y: number, margin: n
 export function scaleDiffers(a: number, b: number): boolean {
   return Math.abs(a - b) > 1e-4 * Math.max(Math.abs(a), Math.abs(b));
 }
+
+/** The part of a rendered frame that fixes where the diagram origin sits. */
+export interface OriginFrame {
+  /** `viewBox` x/y: user-space coordinates of the frame's top-left corner. */
+  viewBoxX: number;
+  viewBoxY: number;
+  /** Rendered px per user-space unit. */
+  scale: number;
+}
+
+/**
+ * Where the diagram origin (user-space 0,0) sits inside the svg's layout box, in
+ * rendered px: `-viewBox{X,Y} * scale`. Top/left growth makes it larger.
+ */
+export function originOffset(frame: OriginFrame): { x: number; y: number } {
+  // `+ 0` normalises -0 to 0.
+  return { x: -frame.viewBoxX * frame.scale + 0, y: -frame.viewBoxY * frame.scale + 0 };
+}
+
+/**
+ * How far the diagram origin moved on screen between two committed frames, in
+ * rendered px. Positive means right/down, so a host that scrolls by the same
+ * amounts keeps the origin still. `null` when it did not move (always the case
+ * for bottom/right-only changes).
+ */
+export function originShift(prev: OriginFrame, cur: OriginFrame): { dx: number; dy: number } | null {
+  const a = originOffset(prev);
+  const b = originOffset(cur);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return dx === 0 && dy === 0 ? null : { dx, dy };
+}

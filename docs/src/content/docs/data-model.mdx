@@ -241,8 +241,10 @@ scroll extent) grows while a node is dragged past an edge. To keep the diagram f
 under the pointer, the renderer holds the diagram origin still on screen with a temporary CSS
 `transform` on the `<svg>`, dropped on release; content shifts once, without animation, if the
 diagram grew at the top or left. In zoom-to-fit the scale changes live and the pointer is
-mapped through the current matrix; pass `onFrameChange` to re-fit as the frame grows. See
-ADR-100 (as amended by #104).
+mapped through the current matrix; pass `onFrameChange` to re-fit as the frame grows. A
+transform paints outside the `<svg>`'s box, so a host whose container clips can pass
+`holdOrigin={false}` and absorb the shift itself with `onOriginShift` (see Recipe 5 in
+[Recipes](../recipes/#recipe-5-a-scrolling-host-absorbs-the-origin-shift)). See ADR-100 (as amended by #104 and #110).
 :::
 
 ## Worked example: parse → layout, real output

@@ -32,6 +32,7 @@ import { useC4ConnectDrag } from './hooks/useC4ConnectDrag';
 import {
   GROWTH_CAP_MARGIN_PX,
   MAX_REMAP_PASSES,
+  originShift,
   findScrollContainerRect,
   isInsideGrowthMargin,
   scaleDiffers,
@@ -226,6 +227,7 @@ export interface C4InteractiveRendererProps {
    * The one CSS `transform` this component ever sets is not the zoom mechanism:
    * during a node drag it translates the `<svg>` to hold the diagram origin still
    * on screen while the frame grows (ADR-100), and it is removed when the drag ends.
+   * `holdOrigin={false}` turns even that off.
    */
   zoom?: number;
   /**
@@ -235,6 +237,35 @@ export interface C4InteractiveRendererProps {
    * During a node drag the frame grows live, and this is how a fitting host sees it.
    */
   onFrameChange?: (size: { width: number; height: number }) => void;
+  /**
+   * Whether the renderer holds the diagram origin still on screen during a node
+   * drag (ADR-100) by translating the `<svg>` with a CSS `transform`. Default
+   * `true`. A transform paints outside the svg's layout box, so a host whose
+   * container clips (any `overflow` other than `visible`) cuts off the grown strip
+   * at the top and left, including the dragged node, until release.
+   *
+   * With `false` the renderer never sets a `transform`: the svg's layout box is
+   * always the whole drawing, so all four edges behave alike. The origin then moves
+   * inside that box when the frame grows at the top or left, and the host must
+   * absorb it (typically by scrolling its container) using `onOriginShift`. A host
+   * that opts out and does not compensate sees the drawing shift on screen.
+   */
+  holdOrigin?: boolean;
+  /**
+   * With `holdOrigin={false}`: called from a layout effect, in the same commit as
+   * the frame change and so before paint, whenever the diagram origin moves on
+   * screen during a drag because the frame grew or shrank at the top or left. `dx`
+   * and `dy` are CSS px at the current rendered scale (user-space shift times the
+   * scale, so correct when host CSS shrinks the svg to fit) and are the
+   * displacement since the previous commit, not a running total. Positive means
+   * the origin moved right/down, so scrolling by the same amounts keeps it still.
+   *
+   * Not called for bottom/right-only changes, a zero shift, or outside a drag. A
+   * cancelled drag (pointercancel, Escape) reports the reverse shift so the host
+   * can undo its compensation. Never called while `holdOrigin` is `true`, where
+   * the renderer's own transform already compensates.
+   */
+  onOriginShift?: (shift: { dx: number; dy: number }) => void;
 }
 
 /**
@@ -299,6 +330,8 @@ export function C4InteractiveRenderer({
   onContextMenu,
   zoom = 1,
   onFrameChange,
+  holdOrigin = true,
+  onOriginShift,
 }: C4InteractiveRendererProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -630,6 +663,39 @@ export function C4InteractiveRenderer({
     onNodeDragEnd: handleNodeDragEnd,
     onNodeDragCancel: canEdit ? handleNodeDragCancel : undefined,
     enabled: isEditMode,
+    // A host absorbing the origin shift itself scrolls by an amount the locked
+    // matrix cannot know (rounding, clamping), so map through the live one.
+    liveMapping: !holdOrigin,
+  });
+
+  // `onOriginShift` is wrapped so the outer component knows the host scrolled in
+  // this commit (see the effect below). Only with the opt-out: otherwise the
+  // callback is never called.
+  const onOriginShiftRef = useRef(onOriginShift);
+  onOriginShiftRef.current = onOriginShift;
+  const shiftedRef = useRef(false);
+  const handleOriginShift = useCallback((shift: { dx: number; dy: number }) => {
+    // Remap only if the host moved the svg on screen inside its callback (scrolled).
+    // A host that does nothing leaves the origin shifted; remapping then would chase
+    // the shift and run away, the feedback #100 removed.
+    const svg = svgRef.current;
+    const before = svg?.getScreenCTM();
+    onOriginShiftRef.current?.(shift);
+    const after = svg?.getScreenCTM();
+    if (before && after && (before.e !== after.e || before.f !== after.f)) shiftedRef.current = true;
+  }, []);
+
+  // The host absorbed an origin shift (scrolled) during this commit. If it scrolled
+  // by exactly the shift the mapping is unchanged and `remapDrag` reports nothing;
+  // if it scrolled differently the stationary pointer now maps to a different point,
+  // and this brings the node back under it. Runs after the child's layout effects,
+  // which is where the callback fires. Same `MAX_REMAP_PASSES` budget as zoom-to-fit.
+  useLayoutEffect(() => {
+    if (!shiftedRef.current) return;
+    shiftedRef.current = false;
+    if (draggedNodeId === null) return;
+    if (remapPassesRef.current >= MAX_REMAP_PASSES) return;
+    if (remapDrag()) remapPassesRef.current += 1;
   });
 
   // The rendered scale changed (zoom-to-fit re-fitting as the frame grew) under a
@@ -1087,6 +1153,8 @@ export function C4InteractiveRenderer({
       zoom={zoom}
       growthCapped={growthCapped}
       onFrameChange={onFrameChange}
+      holdOrigin={holdOrigin}
+      onOriginShift={holdOrigin ? undefined : handleOriginShift}
       onHostContextMenu={onContextMenu ? handleHostContextMenu : undefined}
       editing={
         canEdit
@@ -1140,6 +1208,9 @@ interface C4InteractiveSvgProps {
   /** Frame growth is paused (fit mode, pointer near the container edge). */
   growthCapped: boolean;
   onFrameChange?: (size: { width: number; height: number }) => void;
+  /** False: never write a `transform`; report origin shifts instead. */
+  holdOrigin: boolean;
+  onOriginShift?: (shift: { dx: number; dy: number }) => void;
   /** Host-owned context menu: attached whether or not editing is on, and replaces the built-in handler. */
   onHostContextMenu?: (e: React.MouseEvent) => void;
   /** Structural-editing state and handlers; null when editing is not enabled. */
@@ -1201,6 +1272,8 @@ function C4InteractiveSvg({
   zoom,
   growthCapped,
   onFrameChange,
+  holdOrigin,
+  onOriginShift,
   onHostContextMenu,
   editing,
 }: C4InteractiveSvgProps): JSX.Element {
@@ -1316,6 +1389,8 @@ function C4InteractiveSvg({
   // already-grown frame would leave the diagram shifted for the rest of the drag).
   const originStartRef = useRef<{ x: number; y: number } | false | null>(null);
   useLayoutEffect(() => {
+    // Opted out (#110): the host absorbs the shift, nothing is written, not even `''`.
+    if (!holdOrigin) return;
     const svg = svgRef.current;
     if (!svg) return;
     if (!dragging) {
@@ -1337,10 +1412,32 @@ function C4InteractiveSvg({
   // Dropped with the component too, though the element goes with it.
   useLayoutEffect(
     () => () => {
-      if (svgRef.current) svgRef.current.style.transform = '';
+      if (holdOrigin && svgRef.current) svgRef.current.style.transform = '';
     },
-    [svgRef],
+    [svgRef, holdOrigin],
   );
+
+  // Origin shift for a host that opted out of the hold (#110). From the frame
+  // actually rendered (after the growth-cap substitution), not from the DOM, so a
+  // host scrolling inside the callback cannot disturb the baseline, and it is
+  // exactly zero for bottom/right-only changes. The baseline advances on every
+  // commit, reported or not. On cancel `draggedNodeId` goes null in the same
+  // commit that restores the frame, hence `wasDraggingRef`: that commit is still
+  // part of the drag and reports the reverse shift.
+  const onOriginShiftRef = useRef(onOriginShift);
+  onOriginShiftRef.current = onOriginShift;
+  const lastOriginFrameRef = useRef({ viewBoxX, viewBoxY, scale });
+  const wasDraggingRef = useRef(false);
+  useLayoutEffect(() => {
+    const prev = lastOriginFrameRef.current;
+    const cur = { viewBoxX, viewBoxY, scale };
+    lastOriginFrameRef.current = cur;
+    const inDrag = dragging || wasDraggingRef.current;
+    wasDraggingRef.current = dragging;
+    if (holdOrigin || !inDrag) return;
+    const shift = originShift(prev, cur);
+    if (shift) onOriginShiftRef.current?.(shift);
+  }, [holdOrigin, dragging, viewBoxX, viewBoxY, scale]);
 
   // Tell a fitting host the frame size changed, in the same commit.
   const onFrameChangeRef = useRef(onFrameChange);
