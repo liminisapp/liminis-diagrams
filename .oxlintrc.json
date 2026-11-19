@@ -1,0 +1,285 @@
+{
+  // Generated once from the old eslint.config.js with @oxlint/migrate, then
+  // reviewed by hand (ADR-114). `pnpm lint` passes `src/` explicitly, so that is
+  // the lint scope; rules are top-level rather than under a `src/**` override so
+  // the fixtures in scripts/oxlint/fixtures see the same rules as real code.
+  //
+  // Not carried over: no-restricted-syntax (not implemented in Oxlint; replaced
+  // by the host-boundary plugin below), no-dupe-args / no-octal (strict mode),
+  // react-hooks/config and /gating (React Compiler options Oxlint fixes).
+  // The old `off` overrides (no-explicit-any, no-unsafe-*, react-hooks/refs, ...)
+  // are simply absent: the correctness category is off and only listed rules run.
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "react"
+  ],
+  // The host-boundary guard: see scripts/oxlint/host-boundary-plugin.mjs.
+  "jsPlugins": [
+    "./scripts/oxlint/host-boundary-plugin.mjs"
+  ],
+  "categories": {
+    "correctness": "off"
+  },
+  "options": {
+    "typeAware": true
+  },
+  "env": {
+    "builtin": true,
+    "es2024": true,
+    "browser": true,
+    "node": true
+  },
+  // `dist/**` matters more than it looks: emitted .d.ts files are in no tsconfig
+  // project, so a type-aware run over them is a parse error, not a finding.
+  // `examples/**` and `demo/**` are separate installs; `scripts/**` is plain Node
+  // ESM outside the TypeScript project.
+  "ignorePatterns": [
+    "node_modules/**",
+    "dist/**",
+    "coverage/**",
+    "examples/**",
+    "demo/**",
+    "scripts/**",
+    "vitest.config.ts"
+  ],
+  "rules": {
+    "constructor-super": "error",
+    "for-direction": "error",
+    "getter-return": "error",
+    "no-async-promise-executor": "error",
+    "no-class-assign": "error",
+    "no-compare-neg-zero": "error",
+    "no-cond-assign": "error",
+    "no-const-assign": "error",
+    "no-constant-binary-expression": "error",
+    "no-constant-condition": "error",
+    "no-control-regex": "error",
+    "no-debugger": "error",
+    "no-delete-var": "error",
+    "no-dupe-class-members": "error",
+    "no-dupe-else-if": "error",
+    "no-dupe-keys": "error",
+    "no-duplicate-case": "error",
+    "no-empty": "error",
+    "no-empty-character-class": "error",
+    "no-empty-pattern": "error",
+    "no-empty-static-block": "error",
+    "no-ex-assign": "error",
+    "no-extra-boolean-cast": "error",
+    "no-fallthrough": "error",
+    "no-func-assign": "error",
+    "no-global-assign": "error",
+    "no-import-assign": "error",
+    "no-invalid-regexp": "error",
+    "no-irregular-whitespace": "error",
+    "no-loss-of-precision": "error",
+    "no-misleading-character-class": "error",
+    "no-new-native-nonconstructor": "error",
+    "no-nonoctal-decimal-escape": "error",
+    "no-obj-calls": "error",
+    "no-prototype-builtins": "error",
+    "no-redeclare": "error",
+    "no-regex-spaces": "error",
+    "no-self-assign": "error",
+    "no-setter-return": "error",
+    "no-shadow-restricted-names": "error",
+    "no-sparse-arrays": "error",
+    "no-this-before-super": "error",
+    "no-unassigned-vars": "error",
+    "no-undef": "error",
+    "no-unexpected-multiline": "error",
+    "no-unreachable": "error",
+    "no-unsafe-finally": "error",
+    "no-unsafe-negation": "error",
+    "no-unsafe-optional-chaining": "error",
+    "no-unused-labels": "error",
+    "no-unused-private-class-members": "error",
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "no-useless-assignment": "error",
+    "no-useless-backreference": "error",
+    "no-useless-catch": "error",
+    "no-useless-escape": "error",
+    "no-with": "error",
+    "preserve-caught-error": "error",
+    "require-yield": "error",
+    "use-isnan": "error",
+    "valid-typeof": "error",
+    "no-array-constructor": "error",
+    "no-unused-expressions": "error",
+    "typescript/await-thenable": "error",
+    "typescript/ban-ts-comment": "error",
+    "typescript/no-array-delete": "error",
+    "typescript/no-base-to-string": "error",
+    "typescript/no-duplicate-enum-values": "error",
+    "typescript/no-duplicate-type-constituents": "error",
+    "typescript/no-extra-non-null-assertion": "error",
+    "typescript/no-floating-promises": "warn",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-implied-eval": "error",
+    "typescript/no-misused-new": "error",
+    "typescript/no-misused-promises": [
+      "error",
+      {
+        "checksVoidReturn": {
+          "attributes": false
+        }
+      }
+    ],
+    "typescript/no-namespace": "error",
+    "typescript/no-non-null-asserted-optional-chain": "error",
+    "typescript/no-this-alias": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-declaration-merging": "error",
+    "typescript/no-unsafe-enum-comparison": "error",
+    "typescript/no-unsafe-function-type": "error",
+    "typescript/no-unsafe-unary-minus": "error",
+    "typescript/no-wrapper-object-types": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/prefer-as-const": "error",
+    "typescript/prefer-namespace-keyword": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/restrict-plus-operands": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/triple-slash-reference": "error",
+    "typescript/unbound-method": "error",
+    "typescript/adjacent-overload-signatures": "error",
+    "typescript/array-type": "error",
+    "typescript/ban-tslint-comment": "error",
+    "typescript/class-literal-property-style": "error",
+    "typescript/consistent-generic-constructors": "error",
+    "typescript/consistent-indexed-object-style": "error",
+    "typescript/consistent-type-assertions": "error",
+    "typescript/dot-notation": "error",
+    "typescript/no-confusing-non-null-assertion": "error",
+    "typescript/non-nullable-type-assertion-style": "error",
+    "typescript/prefer-find": "error",
+    "typescript/prefer-for-of": "error",
+    "typescript/prefer-includes": "error",
+    "typescript/prefer-optional-chain": "error",
+    "typescript/prefer-regexp-exec": "error",
+    "typescript/prefer-string-starts-ends-with": "error",
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/static-components": "error",
+    "react/use-memo": "error",
+    "react/preserve-manual-memoization": "error",
+    "react/incompatible-library": "warn",
+    "react/globals": "error",
+    "react/error-boundaries": "error",
+    "react/purity": "error",
+    "react/set-state-in-render": "error",
+    "react/unsupported-syntax": "warn",
+    "react/only-export-components": [
+      "warn",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "no-restricted-globals": [
+      "warn",
+      {
+        "name": "confirm",
+        "message": "Use a dialog component instead of confirm(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "name": "alert",
+        "message": "Report errors through a callback the host passes in (or its own notification UI) instead of alert(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "name": "prompt",
+        "message": "Use a dialog with an input component instead of prompt(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      }
+    ],
+    "no-restricted-properties": [
+      "warn",
+      {
+        "object": "window",
+        "property": "confirm",
+        "message": "Use a dialog component instead of window.confirm(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "object": "window",
+        "property": "alert",
+        "message": "Report errors through a callback the host passes in (or its own notification UI) instead of window.alert(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "object": "window",
+        "property": "prompt",
+        "message": "Use a dialog with an input component instead of window.prompt(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "object": "globalThis",
+        "property": "confirm",
+        "message": "Use a dialog component instead of globalThis.confirm(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "object": "globalThis",
+        "property": "alert",
+        "message": "Report errors through a callback the host passes in (or its own notification UI) instead of globalThis.alert(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      },
+      {
+        "object": "globalThis",
+        "property": "prompt",
+        "message": "Use a dialog with an input component instead of globalThis.prompt(). Native dialogs block the host event loop, cannot be styled or tested, and are not available in every shell this package runs in."
+      }
+    ],
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "**/liminis-app/**",
+              "**/messaging-electron*"
+            ],
+            "message": "@liminis/diagrams must not import from a host application. Accept the capability through a component prop or an option instead."
+          }
+        ]
+      }
+    ],
+    "host-boundary/no-window-api": "error",
+    "host-boundary/no-window-computed-api": "error",
+    "host-boundary/no-window-cast-api": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.mts",
+        "**/*.cts"
+      ],
+      "rules": {
+        "constructor-super": "off",
+        "getter-return": "off",
+        "no-class-assign": "off",
+        "no-const-assign": "off",
+        "no-dupe-class-members": "off",
+        "no-dupe-keys": "off",
+        "no-func-assign": "off",
+        "no-import-assign": "off",
+        "no-new-native-nonconstructor": "off",
+        "no-obj-calls": "off",
+        "no-redeclare": "off",
+        "no-setter-return": "off",
+        "no-this-before-super": "off",
+        "no-undef": "off",
+        "no-unreachable": "off",
+        "no-unsafe-negation": "off",
+        "no-var": "error",
+        "no-with": "off",
+        "prefer-const": "error",
+        "prefer-rest-params": "error",
+        "prefer-spread": "error"
+      }
+    }
+  ]
+}

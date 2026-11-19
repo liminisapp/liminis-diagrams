@@ -1459,8 +1459,7 @@ function C4InteractiveSvg({
       : null;
   const accent = 'var(--c4-accent, #3b82f6)';
   const gesturesIdle =
-    editing !== null &&
-    editing.menu === null &&
+    editing?.menu === null &&
     editing.pending === null &&
     editing.pendingRel === null &&
     editing.renaming === null;
