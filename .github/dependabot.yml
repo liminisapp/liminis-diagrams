@@ -39,6 +39,14 @@ updates:
       # of riding dev-non-major.
       vitest:
         patterns: ["vitest", "@vitest/*"]
+      # The linter and the compiler move as one unit, ahead of the non-major and
+      # majors groups (first match wins), with no update-types so majors land
+      # here too. oxlint-tsgolint is built on a specific TypeScript release (it
+      # tracks 7.0.2) and oxlint loads it for type-aware rules, so bumping any
+      # one of the three alone leaves a combination nobody tested: the same
+      # coupling that made typescript-eslint block TypeScript 7 (ADR-114).
+      oxlint-toolchain:
+        patterns: ["oxlint", "oxlint-tsgolint", "typescript"]
       runtime-non-major:
         dependency-type: production
         update-types: [minor, patch]
