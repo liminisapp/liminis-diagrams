@@ -13,11 +13,11 @@
     "diagrams:check": "node scripts/render-diagrams.mjs --check"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "^7.3.7",
-    "@astrojs/react": "^7.1.7",
-    "@astrojs/starlight": "^0.42.10",
+    "@astrojs/markdown-remark": "^7.3.9",
+    "@astrojs/react": "^7.1.9",
+    "@astrojs/starlight": "^0.43.1",
     "@liminis/diagrams": "^0.2.2",
-    "astro": "^7.4.10",
+    "astro": "^7.4.12",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
